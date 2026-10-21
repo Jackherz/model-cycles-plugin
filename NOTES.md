@@ -546,12 +546,48 @@ not. Measured, Kick into full reverb send, note-off after 0.1 s:
   full reverb send, size 127, tone 0, and the same at size 120) would give
   the true decay rates to compare.
 
+## Step 11: LFOs as on the hardware, and the editor (2026-10-21)
+
+LFO facts, from the firmware (`scripts/ccsweep.py`,
+`scripts/lfodest_screens.py`, `scripts/lfopage_values.py`, measurements):
+
+- **Destination** = record word `+0x1c` (CC 105). The firmware accepts only
+  0 and 10-22, the index of the target parameter in the record (index =
+  (offset - 0x14) / 2): 0 `---`, 10 PTCH, 11 COLR, 12 SHPE, 13 SWEP,
+  14 CONT, 15 PAW (Punch), 16 GATE, 17 FTUN (fine tune, record `+0x36`, no
+  CC of its own), 18 DEC, 19 DIST, 20 DELS, 21 REVS, 22 PAN. Other values
+  are ignored (why 37 and 90 wrote nothing in step 4).
+- **Multiplier** = `+0x18` (CC 103), 0-23: 0-11 show as x1..x2k and are
+  **tempo-synced**, 12-23 show as 1..2k and **run free** at the 120 BPM
+  rate. Measured with the LFO on pan, speed +32: x4 cycles at 0.23 Hz at
+  60 BPM and 0.50 Hz at 120; plain 4 at 0.50 Hz at both.
+- **Waveform** `+0x1e` 0-6: triangle, sine, square, saw, ENV, ramp, random
+  (as drawn on the LFO page). **Speed** `+0x16` and **depth** `+0x24` are
+  bipolar (64 = 0; speed 64 stops the LFO); fade `+0x1a` bipolar as on other
+  Elektron machines. **Trig mode** `+0x22` 0-4: drawn as icons, so the names
+  Free/Trig/Hold/One/Half are Elektron's usual order, **unverified**.
+
+Plugin:
+- Parameters per track: LFO Sync (Sync/Free) + LFO Multiplier (1..2k)
+  combine into the firmware's 0-23; LFO Destination (14 choices); LFO
+  Waveform; LFO Trig Mode; Speed/Depth/Fade shown -64..+63; Pitch shown in
+  semitones; Pan as L/C/R. CC 103 and CC 105 pass the firmware's raw values
+  (invalid destinations ignored, as the firmware does).
+- **Follow Host Tempo** (default on): off, the Tempo parameter rules.
+- **Editor** (`Source/PluginEditor.*`): global strip (MIDI mode, keys track,
+  tempo follow, tempo, output), a page per track (SOUND: machine, punch,
+  gate, mute, the six machine knobs, vol+dist, pan, sends, level; LFO:
+  waveform, trig mode, sync, multiplier, destination, speed, depth, fade,
+  phase) and an FX page. `CyclesEmuEditorShot` renders every page to PNG
+  (`notes/editor-*.png`) to check the layout without a host.
+- Engine status (or the missing-state error) shows top right.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
    a. (done, step 9) the idle hum: the reverb at size 127 froze the
       captured tail; effects now start silent;
-   b. a proper editor, with
+   b. (done, step 11) a proper editor, with
       - **a button: follow the host tempo, or not** (then the Tempo
         parameter rules even inside a DAW);
       - **each track's LFO synced to tempo or free running, as the
