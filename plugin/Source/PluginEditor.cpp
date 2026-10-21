@@ -1,62 +1,18 @@
 #include "PluginEditor.h"
 
 using namespace cyclesemu;
+using namespace retro;
 
 namespace
 {
-const juce::Colour kBack(0xff18181c), kPanel(0xff24242a), kEdge(0xff34343c), kText(0xffe8e8ea),
-    kDim(0xff8c8c96), kAccent(0xffff8a3d);
 constexpr int kW = 960, kH = 600;
+// the window's furniture
+const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kToolbar(10, 32, kW - 20, 124), kTabs(14, 160, kW - 28, 24),
+    kPanel(10, 182, kW - 20, 386), kStatus(4, kH - 28, kW - 8, 24);
+constexpr int kLogoW = 220;
+
+void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
 } // namespace
-
-CyclesEmuLook::CyclesEmuLook()
-{
-    setColour(juce::ResizableWindow::backgroundColourId, kBack);
-    setColour(juce::Label::textColourId, kText);
-    setColour(juce::Slider::textBoxTextColourId, kText);
-    setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::Slider::rotarySliderFillColourId, kAccent);
-    setColour(juce::Slider::rotarySliderOutlineColourId, kEdge);
-    setColour(juce::Slider::trackColourId, kAccent);
-    setColour(juce::ComboBox::backgroundColourId, kBack);
-    setColour(juce::ComboBox::outlineColourId, kEdge);
-    setColour(juce::ComboBox::textColourId, kText);
-    setColour(juce::ComboBox::arrowColourId, kAccent);
-    setColour(juce::PopupMenu::backgroundColourId, kPanel);
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, kAccent.withAlpha(0.35f));
-    setColour(juce::ToggleButton::textColourId, kText);
-    setColour(juce::ToggleButton::tickColourId, kAccent);
-    setColour(juce::ToggleButton::tickDisabledColourId, kDim);
-    setColour(juce::TextButton::buttonColourId, kPanel);
-    setColour(juce::TextButton::buttonOnColourId, kAccent);
-    setColour(juce::TextButton::textColourOffId, kText);
-    setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-}
-
-void CyclesEmuLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float start,
-                                     float end, juce::Slider& s)
-{
-    auto r = juce::Rectangle<int>(x, y, w, h).toFloat().reduced(4.0f);
-    float size = juce::jmin(r.getWidth(), r.getHeight());
-    auto c = r.withSizeKeepingCentre(size, size);
-    float radius = size / 2.0f, line = 3.5f;
-    float angle = start + pos * (end - start);
-    juce::Path track, value;
-    track.addCentredArc(c.getCentreX(), c.getCentreY(), radius - line, radius - line, 0.0f, start, end, true);
-    g.setColour(kEdge);
-    g.strokePath(track, juce::PathStrokeType(line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    // bipolar parameters fill from the centre
-    bool bipolar = s.getMinimum() == 0 && s.getMaximum() == 127 && s.getTextFromValue(64.0).trim() == "0";
-    float from = bipolar ? (start + end) / 2.0f : start;
-    value.addCentredArc(c.getCentreX(), c.getCentreY(), radius - line, radius - line, 0.0f,
-                        juce::jmin(from, angle), juce::jmax(from, angle), true);
-    g.setColour(kAccent);
-    g.strokePath(value, juce::PathStrokeType(line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    juce::Point<float> tip(c.getCentreX() + (radius - 9.0f) * std::sin(angle),
-                           c.getCentreY() - (radius - 9.0f) * std::cos(angle));
-    g.setColour(kText);
-    g.drawLine({c.getCentre(), tip}, 2.0f);
-}
 
 ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::String& id, const juce::String& label,
                            Style s)
@@ -64,8 +20,6 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
 {
     caption.setText(label, juce::dontSendNotification);
     caption.setJustificationType(juce::Justification::centred);
-    caption.setColour(juce::Label::textColourId, kDim);
-    caption.setFont(juce::FontOptions(12.0f));
     auto* p = st.getParameter(id);
     jassert(p != nullptr);
     switch (s)
@@ -73,12 +27,13 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
         case Style::Knob:
             addAndMakeVisible(caption);
             knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 16);
+            knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 84, 20);
             addAndMakeVisible(knob);
             knobAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, id, knob);
             break;
         case Style::Choice:
             addAndMakeVisible(caption);
+            caption.setJustificationType(juce::Justification::centredLeft);
             box.addItemList(p->getAllValueStrings(), 1);
             addAndMakeVisible(box);
             boxAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, id, box);
@@ -97,55 +52,57 @@ void ParamControl::resized()
     switch (style)
     {
         case Style::Knob:
-            caption.setBounds(r.removeFromTop(16));
+            caption.setBounds(r.removeFromTop(18));
             knob.setBounds(r);
             break;
         case Style::Choice:
-            caption.setBounds(r.removeFromTop(16));
-            box.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 26));
+            r = r.withSizeKeepingCentre(r.getWidth() - 8, 44);
+            caption.setBounds(r.removeFromTop(18).withTrimmedLeft(2));
+            box.setBounds(r.withHeight(24));
             break;
         case Style::Toggle:
-            toggle.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 26));
+            toggle.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 24));
             break;
     }
 }
 
-void Section::paint(juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat();
-    g.setColour(kPanel);
-    g.fillRoundedRectangle(r, 8.0f);
-    g.setColour(kEdge);
-    g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
-    g.setColour(kAccent);
-    g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
-    g.drawText(title, getLocalBounds().reduced(12, 6).removeFromTop(18), juce::Justification::left);
-}
+void Section::paint(juce::Graphics& g) { groupBox(g, getLocalBounds(), title, accentFor(*this)); }
 
 void Section::resized()
 {
-    // A grid as wide as the widest row (at least four columns), rows centred
-    // and no taller than a knob needs: every control of a kind gets one size.
-    auto r = getLocalBounds().reduced(10, 8);
-    r.removeFromTop(22);
+    // A grid as wide as the widest row (at least four columns). Rows of
+    // choices and toggles are short; rows with knobs share the rest (up to a
+    // knob's worth each) and the spare height spreads out between rows.
+    auto r = getLocalBounds().reduced(12, 8);
+    r.removeFromTop(16);
     if (rows.empty())
         return;
     size_t cols = 4;
     for (auto& row : rows)
         cols = std::max(cols, row.size());
     int cellW = r.getWidth() / (int)cols;
-    int rowH = juce::jmin(118, r.getHeight() / (int)rows.size());
+    auto hasKnob = [](auto& row) {
+        return std::any_of(row.begin(), row.end(), [](auto* c) { return c->style == ParamControl::Style::Knob; });
+    };
+    const int shortH = 52;
+    int knobRows = 0, fixed = 0;
+    for (auto& row : rows)
+        if (hasKnob(row))
+            ++knobRows;
+        else
+            fixed += shortH;
+    int knobH = knobRows ? juce::jmin(118, (r.getHeight() - fixed) / knobRows) : 0;
+    int gap = (r.getHeight() - fixed - knobH * knobRows) / (int)(rows.size() + 1);
     for (auto& row : rows)
     {
-        auto line = r.removeFromTop(rowH);
-        // rows of choices share the full width (their text needs it)
-        bool choices = std::all_of(row.begin(), row.end(),
-                                   [](auto* c) { return c->style == ParamControl::Style::Choice; });
-        int w = choices ? line.getWidth() / (int)row.size() : cellW;
+        r.removeFromTop(gap);
+        auto line = r.removeFromTop(hasKnob(row) ? knobH : shortH);
+        // rows without knobs share the full width (their text needs it)
+        int w = hasKnob(row) ? cellW : line.getWidth() / (int)row.size();
         int used = w * (int)row.size();
         line.removeFromLeft((line.getWidth() - used) / 2);
         for (auto* c : row)
-            c->setBounds(line.removeFromLeft(w).reduced(3));
+            c->setBounds(line.removeFromLeft(w).reduced(3, 0));
     }
 }
 
@@ -166,7 +123,7 @@ TrackPage::TrackPage(juce::AudioProcessorValueTreeState& st, int t)
     sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob),
                   make(st, t, "color", "Color", S::Knob), make(st, t, "shape", "Shape", S::Knob),
                   make(st, t, "sweep", "Sweep", S::Knob), make(st, t, "contour", "Contour", S::Knob)});
-    sound.addRow({make(st, t, "voldist", "Vol+Dist", S::Knob), make(st, t, "pan", "Pan", S::Knob),
+    sound.addRow({make(st, t, "voldist", "Vol+Dst", S::Knob), make(st, t, "pan", "Pan", S::Knob),
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});
     lfo.addRow({make(st, t, "lfowave", "Waveform", S::Choice), make(st, t, "lforeset", "Trig Mode", S::Choice)});
@@ -179,8 +136,8 @@ TrackPage::TrackPage(juce::AudioProcessorValueTreeState& st, int t)
 void TrackPage::resized()
 {
     auto r = getLocalBounds();
-    sound.setBounds(r.removeFromLeft(r.getWidth() * 60 / 100).reduced(6));
-    lfo.setBounds(r.reduced(6));
+    sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
+    lfo.setBounds(r.withTrimmedLeft(6));
 }
 
 FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
@@ -198,26 +155,37 @@ FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
     auto* tn = mk("reverbtone", "Tone");
     delay.addRow({dt, fb});
     reverb.addRow({sz, tn});
-    note.setText("Delay time is tempo-synced (32 = one beat). Reverb size 127 plays as 126 for now: as emulated "
-                 "it never decays, while the hardware's does.",
-                 juce::dontSendNotification);
-    note.setColour(juce::Label::textColourId, kDim);
-    note.setFont(juce::FontOptions(12.0f));
-    addAndMakeVisible(note);
+}
+
+void FxPage::paint(juce::Graphics& g)
+{
+    // a Win95 message: the "i" icon and the text beside it
+    auto r = noteArea;
+    auto icon = r.removeFromLeft(32).withHeight(32);
+    g.setColour(kNavy);
+    g.fillEllipse(icon.toFloat());
+    g.setColour(kLight);
+    g.fillRect(icon.getCentreX() - 2, icon.getY() + 7, 4, 4);
+    g.fillRect(icon.getCentreX() - 2, icon.getY() + 13, 4, 12);
+    drawWrapped(g,
+                "Delay time is tempo-synced (32 = one beat). Reverb size 127 plays as 126 for now: as emulated it "
+                "never decays, while the hardware's does.",
+                r.withTrimmedLeft(14).withTrimmedTop(2), kText);
 }
 
 void FxPage::resized()
 {
     auto r = getLocalBounds();
-    note.setBounds(r.removeFromBottom(40).reduced(12, 4));
-    auto top = r.removeFromTop(170);
-    delay.setBounds(top.removeFromLeft(top.getWidth() / 2).reduced(6));
-    reverb.setBounds(top.reduced(6));
+    auto top = r.removeFromTop(190);
+    delay.setBounds(top.removeFromLeft(top.getWidth() / 2).withTrimmedRight(6));
+    reverb.setBounds(top.withTrimmedLeft(6));
+    noteArea = r.withTrimmedTop(24).removeFromTop(48).reduced(12, 0);
 }
 
 CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p), proc(p)
 {
     setLookAndFeel(&look);
+    setAccent(*this, kNavy);
     auto& st = p.state();
     using S = ParamControl::Style;
     auto g = [&](const char* id, const juce::String& label, S s) {
@@ -225,13 +193,11 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         addAndMakeVisible(*globals.back());
     };
     g("midimode", "MIDI Mode", S::Choice);
-    g("keystrack", "Keys Track", S::Knob);
-    g("followhost", "Follow Host Tempo", S::Toggle);
+    g("keystrack", "Key Trk", S::Knob);
+    g("followhost", "Host Tempo", S::Toggle);
     g("tempo", "Tempo", S::Knob);
     g("outgain", "Output", S::Knob);
-    status.setColour(juce::Label::textColourId, kDim);
-    status.setFont(juce::FontOptions(12.0f));
-    status.setJustificationType(juce::Justification::centredRight);
+    status.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(status);
 
     for (int i = 0; i <= kTracks; ++i)
@@ -239,14 +205,19 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         auto* b = tabs.add(new juce::TextButton(i < kTracks ? "Track " + juce::String(i + 1) : juce::String("FX")));
         b->setClickingTogglesState(true);
         b->setRadioGroupId(1);
+        b->getProperties().set("tab", true);
+        setAccent(*b, kAccents[i]);
         b->onClick = [this, i] { showPage(i); };
-        addAndMakeVisible(b);
         if (i < kTracks)
             pages.add(new TrackPage(st, i));
         else
             pages.add(new FxPage(st));
+        setAccent(*pages.getLast(), kAccents[i]);
         addChildComponent(pages.getLast());
     }
+    // tabs above the panel's edge, so the selected one opens into it
+    for (auto* b : tabs)
+        addAndMakeVisible(b);
     setSize(kW, kH);
     showPage(0);
     startTimerHz(8);
@@ -262,38 +233,85 @@ void CyclesEmuEditor::showPage(int index)
         pages[i]->setVisible(i == index);
         tabs[i]->setToggleState(i == index, juce::dontSendNotification);
     }
+    tabs[index]->toFront(false);
+    repaint();
 }
 
 void CyclesEmuEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(kBack);
-    auto top = getLocalBounds().removeFromTop(78);
-    g.setColour(kPanel);
-    g.fillRect(top);
-    g.setColour(kText);
-    g.setFont(juce::FontOptions(22.0f, juce::Font::bold));
-    g.drawText("CyclesEmu", top.reduced(16, 0).removeFromTop(48), juce::Justification::bottomLeft);
-    g.setColour(kDim);
-    g.setFont(juce::FontOptions(12.0f));
-    g.drawText("Model:Cycles firmware engine", top.reduced(16, 0).removeFromBottom(26),
-               juce::Justification::topLeft);
+    auto all = getLocalBounds();
+    g.fillAll(kFace);
+    raised(g, all);
+
+    // title bar: navy to blue through a dither, a four-colour icon, the
+    // caption buttons
+    ditherGradient(g, kTitle, kNavy, kTitleEnd);
+    for (int i = 0; i < 4; ++i)
+    {
+        g.setColour(kAccents[i]);
+        g.fillRect(kTitle.getX() + 4 + (i % 2) * 7, kTitle.getY() + 4 + (i / 2) * 7, 6, 6);
+    }
+    drawText(g, "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4, kLight);
+    auto caps = kTitle.withTrimmedRight(3).withSizeKeepingCentre(kTitle.getWidth() - 6, 16);
+    const char* glyph[] = {"x", "[", "_"};
+    for (int i = 0; i < 3; ++i)
+    {
+        auto b = caps.removeFromRight(18);
+        if (i == 0)
+            caps.removeFromRight(2);
+        g.setColour(kFace);
+        g.fillRect(b);
+        raised(g, b, false);
+        if (i == 1)
+        {
+            g.setColour(kDark);
+            g.drawRect(b.getX() + 4, b.getY() + 3, 9, 8, 1);
+            g.fillRect(b.getX() + 4, b.getY() + 3, 9, 2);
+        }
+        else
+            drawText(g, glyph[i], b.withTrimmedTop(1), juce::Justification::centred, kDark, 1);
+    }
+
+    // toolbar: the logo and the global settings in a group box
+    groupBox(g, kToolbar, "System", kNavy);
+    auto logo = kToolbar.withTrimmedTop(26).withTrimmedLeft(18).withWidth(kLogoW);
+    const juce::String word = "CYCLES";
+    for (int i = 0; i < word.length(); ++i)
+    {
+        int x = logo.getX() + i * 6 * 5;
+        drawText(g, word.substring(i, i + 1), x + 3, logo.getY() + 3, kDark, 5);
+        drawText(g, word.substring(i, i + 1), x, logo.getY(), kAccents[i % 4], 5);
+    }
+    drawText(g, "Emu  v1.0", logo.getX() + 2, logo.getY() + 46, kText);
+    drawText(g, "Model:Cycles", logo.getX() + 2, logo.getY() + 64, kDimText);
+
+    // the page panel, and the status bar
+    g.setColour(kFace);
+    g.fillRect(kPanel);
+    raised(g, kPanel);
+    auto sb = kStatus;
+    auto right = sb.removeFromRight(200);
+    sunken(g, sb.withTrimmedRight(2), false);
+    sunken(g, right, false);
+    juce::String where = current < kTracks ? "Track " + juce::String(current + 1) + " of 6" : juce::String("Send FX");
+    g.setColour(kAccents[current]);
+    g.fillRect(right.getX() + 8, right.getCentreY() - 4, 8, 8);
+    drawText(g, where, right.withTrimmedLeft(24), juce::Justification::centredLeft, kText);
 }
 
 void CyclesEmuEditor::resized()
 {
-    auto r = getLocalBounds();
-    auto top = r.removeFromTop(78).reduced(8, 4);
-    top.removeFromLeft(220);                       // title
-    status.setBounds(top.removeFromRight(170));
-    int widths[] = {190, 64, 150, 70, 70};
+    auto top = kToolbar.withTrimmedTop(20).reduced(12, 6);
+    top.removeFromLeft(kLogoW);
+    int widths[] = {252, 100, 160, 86, 86};
     for (size_t i = 0; i < globals.size(); ++i)
         globals[i]->setBounds(top.removeFromLeft(widths[i]).reduced(4, 0));
-    auto bar = r.removeFromTop(40).reduced(10, 6);
-    int w = bar.getWidth() / tabs.size();
+    status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
+    auto bar = kTabs;
     for (auto* b : tabs)
-        b->setBounds(bar.removeFromLeft(w).reduced(3, 0));
+        b->setBounds(bar.removeFromLeft(120).withTrimmedRight(-1).withHeight(26));
     for (auto* p : pages)
-        p->setBounds(r.reduced(4));
+        p->setBounds(kPanel.reduced(10, 12));
 }
 
 void CyclesEmuEditor::timerCallback()
@@ -301,5 +319,6 @@ void CyclesEmuEditor::timerCallback()
     if (proc.engineStatus().isNotEmpty())
         status.setText(proc.engineStatus(), juce::dontSendNotification);
     else
-        status.setText("Engine tempo " + juce::String(proc.currentBpm(), 1) + " BPM", juce::dontSendNotification);
+        status.setText("Ready.  Engine tempo " + juce::String(proc.currentBpm(), 1) + " BPM",
+                       juce::dontSendNotification);
 }

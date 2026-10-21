@@ -582,6 +582,28 @@ Plugin:
   (`notes/editor-*.png`) to check the layout without a host.
 - Engine status (or the missing-state error) shows top right.
 
+## Step 12: the retro editor (2026-10-22)
+
+Restyled after Fors, Windows 95 and PS1/N64 games. The look is in
+`plugin/Source/Retro.h/.cpp`, a LookAndFeel plus drawing helpers. Every
+control and parameter binding is the same as before.
+- Win95 chrome: a navy title bar dithered to blue (4x4 Bayer, 2 px cells),
+  3D bevels, etched group boxes, tabs, white sunken dropdowns, checkboxes,
+  and a status bar.
+- Type: a 5x7 bitmap font drawn in code at 2 px per pixel, upper case only,
+  so no font files are needed. Labels are sized to fit it: "Vol+Dst",
+  "Key Trk", "Host Tempo", and the MIDI mode choice "Drum Map C1-F1".
+  Choices are saved by index, so renaming one doesn't break saved sessions.
+- Knobs: flat-shaded low-poly octagons inside a ring of 15 pixel ticks.
+  Bipolar knobs light from the centre. Each value readout is a black LCD
+  with green text.
+- Colour: each page has one accent, the "accent" property on its page,
+  read by `retro::accentFor`. Tracks 1-4 use the N64 red, yellow, green
+  and blue, then purple and red; FX is grey.
+- Section rows with no knobs are short (52 px). Knob rows share the
+  remaining height.
+- Host tests and auval pass unchanged.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

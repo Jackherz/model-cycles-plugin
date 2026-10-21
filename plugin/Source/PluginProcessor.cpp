@@ -204,7 +204,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayo
     }
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"midimode", 1}, "MIDI Mode",
-        juce::StringArray{"Drum Map (C1-F1 = tracks)", "Ch 1-6 = Tracks"}, 0));
+        juce::StringArray{"Drum Map C1-F1", "Ch 1-6 = Tracks"}, 0));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"followhost", 1}, "Follow Host Tempo", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(

@@ -1,16 +1,10 @@
 // CyclesEmu's editor: a global strip (MIDI, tempo, output), a page per track
-// (sound and LFO, laid out like the Model:Cycles' own pages) and an FX page.
+// (sound and LFO, laid out like the Model:Cycles' own pages) and an FX page,
+// dressed as a Windows 95 program with PS1/N64-era pixel type (Retro.h).
 #pragma once
 
 #include "PluginProcessor.h"
-
-class CyclesEmuLook : public juce::LookAndFeel_V4
-{
-public:
-    CyclesEmuLook();
-    void drawRotarySlider(juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end,
-                          juce::Slider&) override;
-};
+#include "Retro.h"
 
 // A labelled control bound to one parameter.
 class ParamControl : public juce::Component
@@ -67,12 +61,13 @@ class FxPage : public juce::Component
 {
 public:
     explicit FxPage(juce::AudioProcessorValueTreeState&);
+    void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
     Section delay{"DELAY"}, reverb{"REVERB"};
-    juce::Label note;
+    juce::Rectangle<int> noteArea;
 };
 
 class CyclesEmuEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -88,7 +83,7 @@ private:
     void timerCallback() override;
 
     CyclesEmuProcessor& proc;
-    CyclesEmuLook look;
+    retro::Look look;
     std::vector<std::unique_ptr<ParamControl>> globals;
     juce::Label status;
     juce::OwnedArray<juce::TextButton> tabs;
