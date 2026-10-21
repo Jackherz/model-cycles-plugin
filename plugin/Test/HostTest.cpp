@@ -65,6 +65,8 @@ int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const
     mc_engine* g = mc_engine_new(state.toRawUTF8(), &err);
     if (!g) { std::printf("engine state: error %d\n", err); return 1; }
     mc_engine_set_tempo(g, 120.0);   // as the plugin does with no host tempo
+    if (mc_engine_get_param(g, 6, 0x16) > 126)   // and reverb size 127 as 126
+        mc_engine_param(g, 6, 0x16, 126);
     juce::AudioBuffer<float> buf(2, block);
     float l[32], r[32];
     long diffs = 0, n = 0;

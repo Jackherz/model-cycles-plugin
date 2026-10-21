@@ -102,6 +102,8 @@ public:
         {
             mc_engine_set_tempo(engine, 120.0);   // internal clock; a saved state may wait for MIDI clock
             appliedBpm = 120.0;
+            if (mc_engine_get_param(engine, 6, 0x16) > 126)   // reverb size 127 plays as 126 (step 10)
+                mc_engine_param(engine, 6, 0x16, 126);
         }
         for (auto& s : slots)
         {
@@ -182,6 +184,11 @@ public:
     void applyToEngine(const ParamDef& d, int track, int v)
     {
         v = juce::jlimit(d.lo, d.hi, v);
+        // Interim (NOTES.md step 10): as emulated, reverb size 127 never
+        // decays, while the hardware's does; play it as 126 until the
+        // arithmetic difference is found.
+        if (d.kind == Kind::Fx && d.offset == 0x16 && v > 126)
+            v = 126;
         switch (d.kind)
         {
             case Kind::Sound: mc_engine_param(engine, track, d.offset, v); break;

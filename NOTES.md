@@ -540,6 +540,8 @@ not. Measured, Kick into full reverb send, note-off after 0.1 s:
   truncation (MACSR 0x0a0 / 0x020) and signed integer (0x080 / 0x000).
 - Translator note: `ext()` returns long-size expressions unparenthesised;
   correct today only because `+`/`-` bind tighter than `^`/`&`. Parenthesise.
+- **Interim (Jack agreed):** the plugin plays reverb size 127 as 126, at
+  load (the factory kit has 127) and from the parameter or CC 87.
 - **Needed:** a hardware reference. A recording of one Kick hit (track at
   full reverb send, size 127, tone 0, and the same at size 120) would give
   the true decay rates to compare.
