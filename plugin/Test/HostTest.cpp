@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include "engine.h"
+#include "../Source/DcBlock.h"
 
 namespace
 {
@@ -40,12 +41,26 @@ void writeWav(const juce::File& f, const juce::AudioBuffer<float>& buf, double r
         w->writeFromAudioSampleBuffer(buf, 0, buf.getNumSamples());
 }
 
-int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const juce::String& state)
+void setParam(juce::AudioPluginInstance& p, const juce::String& name, float normalised)
+{
+    for (auto* prm : p.getParameters())
+        if (prm->getName(64) == name)
+        {
+            prm->setValue(normalised);
+            return;
+        }
+    std::printf("no parameter %s\n", name.toRawUTF8());
+}
+
+// drum: notes C1-F1 on channel 1 in Drum Map mode; else channels 1-6 in Ch 1-6 mode.
+int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const juce::String& state, bool drum)
 {
     const int block = 128, blocks = 375;   // 1 s
     auto p = load(fm, path, 48000, block);
     if (!p) return 1;
+    setParam(*p, "MIDI Mode", drum ? 0.0f : 1.0f);
     p->prepareToPlay(48000, block);
+    DcBlock dl, dr;
     int err = 0;
     mc_engine* g = mc_engine_new(state.toRawUTF8(), &err);
     if (!g) { std::printf("engine state: error %d\n", err); return 1; }
@@ -59,14 +74,24 @@ int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const
         if (b == 0)
             for (int t = 0; t < 6; ++t)
             {
-                midi.addEvent(juce::MidiMessage::noteOn(t + 1, 48 + 3 * t, (juce::uint8)110), 0);
-                mc_engine_note(g, t, 48 + 3 * t, 110, 1, 0x0681);
+                if (drum)
+                {
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 36 + t, (juce::uint8)110), 0);
+                    mc_engine_note(g, t, 60, 110, 1, 0x0681);
+                }
+                else
+                {
+                    midi.addEvent(juce::MidiMessage::noteOn(t + 1, 48 + 3 * t, (juce::uint8)110), 0);
+                    mc_engine_note(g, t, 48 + 3 * t, 110, 1, 0x0681);
+                }
             }
         buf.clear();
         p->processBlock(buf, midi);
         for (int k = 0; k < block / 32; ++k)
         {
             mc_engine_render(g, l, r);
+            dl.process(l, 32);
+            dr.process(r, 32);
             for (int i = 0; i < 32; ++i, ++n)
             {
                 float a = buf.getSample(0, 32 * k + i), c = buf.getSample(1, 32 * k + i);
@@ -77,8 +102,9 @@ int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const
     }
     mc_engine_free(g);
     p->releaseResources();
-    std::printf("identity at 48 kHz: %ld frames, %ld samples differ from the engine, peak %.3f -> %s\n",
-                n, diffs, peak, diffs == 0 && peak > 0.01 ? "PASS" : "FAIL");
+    std::printf("identity at 48 kHz (%s): %ld frames, %ld samples differ from the engine, peak %.3f -> %s\n",
+                drum ? "Drum Map, C1-F1 on ch 1" : "Ch 1-6 = Tracks", n, diffs, peak,
+                diffs == 0 && peak > 0.01 ? "PASS" : "FAIL");
     return diffs == 0 && peak > 0.01 ? 0 : 1;
 }
 
@@ -89,6 +115,7 @@ int load_test(juce::AudioPluginFormatManager& fm, const juce::String& path, doub
     const int total = (int)(rate * 10);
     auto p = load(fm, path, rate, block);
     if (!p) return 1;
+    setParam(*p, "MIDI Mode", 1.0f);
     p->prepareToPlay(rate, block);
     juce::AudioBuffer<float> out(2, total), buf(2, block);
     std::vector<double> us;
@@ -138,6 +165,35 @@ int load_test(juce::AudioPluginFormatManager& fm, const juce::String& path, doub
                 wavOut.getFullPathName().toRawUTF8());
     return 0;
 }
+// Two minutes with no MIDI: the output's mean (the firmware drifts it) and
+// its level after the DC blocker.
+int idle(juce::AudioPluginFormatManager& fm, const juce::String& path)
+{
+    const int block = 512;
+    auto p = load(fm, path, 48000, block);
+    if (!p) return 1;
+    p->prepareToPlay(48000, block);
+    juce::AudioBuffer<float> buf(2, block);
+    double sum = 0, sum2 = 0;
+    long n = 0;
+    for (int b = 0; b < 48000 * 120 / block; ++b)
+    {
+        juce::MidiBuffer midi;
+        buf.clear();
+        p->processBlock(buf, midi);
+        if (b >= 48000 * 60 / block)   // the second minute
+            for (int i = 0; i < block; ++i, ++n)
+            {
+                double v = buf.getSample(0, i);
+                sum += v;
+                sum2 += v * v;
+            }
+    }
+    double mean = sum / (double)n, rms = std::sqrt(sum2 / (double)n);
+    std::printf("idle, second minute: mean %+.6f, rms %.6f (%.1f dBFS) -> %s\n", mean, rms,
+                20 * std::log10(rms + 1e-12), std::abs(mean) < 1e-4 ? "PASS" : "FAIL");
+    return std::abs(mean) < 1e-4 ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -151,7 +207,9 @@ int main(int argc, char** argv)
         .getChildFile("Application Support/CyclesEmu/state").getFullPathName();
     juce::AudioPluginFormatManager fm;
     fm.addDefaultFormats();
-    int rc = identity(fm, path, state);
+    int rc = identity(fm, path, state, false);
+    rc |= identity(fm, path, state, true);
+    rc |= idle(fm, path);
     rc |= load_test(fm, path, 48000, outDir.getChildFile("hosttest-48k.wav"));
     rc |= load_test(fm, path, 44100, outDir.getChildFile("hosttest-44k1.wav"));
     return rc;

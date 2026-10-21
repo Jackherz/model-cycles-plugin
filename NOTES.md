@@ -431,6 +431,33 @@ engine state beyond the parameters (sound names, LFO destination), the
 CC 105 LFO destination, MIDI clock/tempo for LFO and delay sync, per-track
 outputs, the Voice/FX split.
 
+## Step 7: first DAW report, fixed (2026-10-21)
+
+Jack tried v0.1 in Ableton Live: only MIDI channel 1 played, the level was
+quiet, and a low-frequency build-up appeared while idle.
+
+- **Channels.** The plugin did route channels 2-6 (the host test plays all
+  six), but a Live MIDI track sends channel 1 to its instrument. New
+  parameter **MIDI Mode**, default **Drum Map**: on any channel C1-F1 (36-41)
+  trigger tracks 1-6 at their own pitch, notes from C3 (48) up play the
+  **Keys Track** chromatically. "Ch 1-6 = Tracks" keeps the hardware's
+  multi-channel behaviour. Measured: note 60 is C4 at the programmed pitch
+  (Tone at pitch 64: notes 48/60/72 -> 132/264/528 Hz), so the drum map
+  sends note 60.
+- **Low-frequency build-up.** The firmware's output (bit-exact with digiemu)
+  carries a DC ramp: the idle mean falls ~0.0002 of full scale per minute
+  without levelling (-0.002 after 9 minutes), plus a ~5 Hz component around
+  -64 dB. The hardware's AC-coupled outputs remove DC, so the plugin now
+  runs a first-order 5 Hz high-pass at 48 kHz (`plugin/Source/DcBlock.h`).
+  Idle after it: mean 0.000000, rms -62 dBFS (the firmware's own floor).
+  Possibly the ramp is an emulation artefact (a rounding bias integrating
+  in a filter); only the hardware could tell.
+- **Level.** Engine levels are those of the device at full volume: one note
+  at velocity 127 peaks -4 to -13 dBFS by track (factory kit). New
+  **Output Gain** parameter, -24..+24 dB, default 0.
+- The host test now checks identity in both MIDI modes (through the same
+  DC blocker) and the idle mean.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Next: try it in a DAW; tempo/clock;

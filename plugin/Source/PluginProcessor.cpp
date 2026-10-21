@@ -1,9 +1,15 @@
 // CyclesEmu: the Model:Cycles engine (the firmware's own render, compiled
 // ahead of time, ../aot) as an instrument.
 //
-// MIDI channels 1-6 play tracks 1-6: notes, note-offs and the CCs the
-// Model:Cycles answers (NOTES.md, CC table), clamped as the firmware clamps
-// them. Every sound and FX parameter is also a host parameter, initialised
+// MIDI, in one of two modes (parameter "MIDI Mode"):
+//  - Drum Map (default, for DAWs that send one channel): on any channel,
+//    C1-F1 (notes 36-41) trigger tracks 1-6 at their own pitch (note 60, C4,
+//    is the programmed pitch), and notes from C3 (48) up play the "Keys
+//    Track" chromatically.
+//  - Ch 1-6 = Tracks: channels 1-6 play tracks 1-6 chromatically, as the
+//    hardware does.
+// CCs on channels 1-6 set that track (NOTES.md, CC table), clamped as the
+// firmware clamps them; FX CCs work on any of those channels. Every sound and FX parameter is also a host parameter, initialised
 // from the loaded kit. The engine renders 32-frame blocks at 48 kHz; events
 // take effect at the next block boundary, as on the hardware's control
 // rate. At other host rates the 48 kHz stream is resampled.
@@ -11,6 +17,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <cstring>
 #include "engine.h"
+#include "DcBlock.h"
 
 namespace
 {
@@ -85,6 +92,9 @@ public:
         if (engine == nullptr)
             engineError = "Engine state not found or unreadable in " + stateDir().getFullPathName()
                           + " (error " + juce::String(err) + "). Run aot/dump_state.py and copy it there.";
+        midiMode = apvts.getRawParameterValue("midimode");
+        keysTrack = apvts.getRawParameterValue("keystrack");
+        outGain = apvts.getRawParameterValue("outgain");
         for (auto& s : slots)
         {
             s.param = apvts.getParameter(s.id);
@@ -128,6 +138,14 @@ public:
             }
             layout.add(std::move(group));
         }
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"midimode", 1}, "MIDI Mode",
+            juce::StringArray{"Drum Map (C1-F1 = tracks)", "Ch 1-6 = Tracks"}, 0));
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"outgain", 1}, "Output Gain",
+            juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
         auto fx = std::make_unique<juce::AudioProcessorParameterGroup>("fx", "FX", "|");
         for (const auto& d : kFxParams)
         {
@@ -180,13 +198,32 @@ public:
     void handleMidi(const juce::MidiMessage& m)
     {
         int ch = m.getChannel() - 1;
+        if (m.isNoteOnOrOff())
+        {
+            int track = ch, note = m.getNoteNumber();
+            if (midiMode->load() < 0.5f)              // Drum Map
+            {
+                if (note >= 36 && note <= 41)
+                {
+                    track = note - 36;
+                    note = 60;                        // the track's programmed pitch
+                }
+                else if (note >= 48)
+                    track = juce::jlimit(1, kTracks, (int)keysTrack->load()) - 1;
+                else
+                    return;
+            }
+            if (track < 0 || track >= kTracks)
+                return;
+            if (m.isNoteOn())
+                mc_engine_note(engine, track, note, m.getVelocity(), 1, kTrigFlags);
+            else
+                mc_engine_note(engine, track, note, 0, 0, kTrigFlags);
+            return;
+        }
         if (ch < 0 || ch >= kTracks)
             return;
-        if (m.isNoteOn())
-            mc_engine_note(engine, ch, m.getNoteNumber(), m.getVelocity(), 1, kTrigFlags);
-        else if (m.isNoteOff())
-            mc_engine_note(engine, ch, m.getNoteNumber(), 0, 0, kTrigFlags);
-        else if (m.isController())
+        if (m.isController())
         {
             int cc = m.getControllerNumber(), v = m.getControllerValue();
             for (const auto& d : kTrackParams)
@@ -213,6 +250,8 @@ public:
         ratio = kEngineRate / sampleRate;
         for (auto& r : resamplers)
             r.reset();
+        dcL.reset();
+        dcR.reset();
         srcL.clear();
         srcR.clear();
         srcL.reserve(8192);
@@ -238,6 +277,15 @@ public:
             std::fill(std::begin(blockR), std::end(blockR), 0.0f);
             ++engineFaults;
         }
+        dcL.process(blockL, kBlock);
+        dcR.process(blockR, kBlock);
+        const float g = juce::Decibels::decibelsToGain(outGain->load());
+        if (g != 1.0f)
+            for (int i = 0; i < kBlock; ++i)
+            {
+                blockL[i] *= g;
+                blockR[i] *= g;
+            }
         blockPos = 0;
     }
 
@@ -333,6 +381,10 @@ private:
     juce::WindowedSincInterpolator resamplers[2];
     std::vector<float> srcL, srcR;
     int engineFaults = 0;
+    DcBlock dcL, dcR;
+    std::atomic<float>* midiMode = nullptr;
+    std::atomic<float>* keysTrack = nullptr;
+    std::atomic<float>* outGain = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CyclesEmuProcessor)
 };
