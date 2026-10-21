@@ -511,6 +511,39 @@ quiet, and a low-frequency build-up appeared while idle.
 - MIDI notes hold until their note-off (the firmware's MIDI request has
   length -1): in tests, send note-offs, or every machine sounds forever.
 
+## Step 10 (open): reverb size 127 holds in the emulation, decays on the hardware
+
+Jack (2026-10-21): on the hardware, reverb size 127 "still decays
+eventually". As emulated (digiemu and the AOT agree bit for bit) it does
+not. Measured, Kick into full reverb send, note-off after 0.1 s:
+
+| size | coefficient (0x800011bc) | tone 0: dB/s (3-15 s) | tone 64 |
+|---|---|---|---|
+| 100 | 0.967987 | -5.69 | -7.34 |
+| 110 | 0.976959 | -5.93 | -7.46 |
+| 120 | 0.985901 | -3.89 | -3.90 |
+| 124 | 0.989502 | -1.88 | -1.88 |
+| 126 | 0.991302 | -1.30 | -1.28 |
+| 127 | 0.992188 | **+0.03** (holds at -21 dB) | **grows** to -3.3 dB |
+
+- The size word (FX+0x16 -> SRAM `0x80001750`, 127 = 0x7f000000) becomes
+  the feedback coefficient at `0x800011bc` (0x7f000000 = 0.992 at 127),
+  glided per block by `FUN_40058474` (one-pole, 16-bit MACs, x0x7c29 +
+  x0x03d7). The reverb code reads it at `0x400579d0`/`0x40057a1a`
+  (`FUN_400579c4`, which Ghidra's EMAC language cannot fully decode).
+- Fitting slope = k ln(c G) to sizes 124/126 gives G ~ 1.0047 and predicts
+  about -1.0 dB/s at 127; the engine shows +0.03. So either the loop has a
+  size-127 special case (none found: the 0x7f00 compares in the code are
+  parameter clamps) or the arithmetic gains slightly where the chip loses.
+- Ruled out: MAC scale factors (none of the 394 MAC instructions use one),
+  masked MAC loads (none). The render runs in fractional mode with
+  truncation (MACSR 0x0a0 / 0x020) and signed integer (0x080 / 0x000).
+- Translator note: `ext()` returns long-size expressions unparenthesised;
+  correct today only because `+`/`-` bind tighter than `^`/`&`. Parenthesise.
+- **Needed:** a hardware reference. A recording of one Kick hit (track at
+  full reverb send, size 127, tone 0, and the same at size 120) would give
+  the true decay rates to compare.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
@@ -525,6 +558,8 @@ quiet, and a low-frequency build-up appeared while idle.
         (.1...2k, fixed rate) as on other Elektron machines: verify the
         mapping by measuring LFO rate against tempo, then expose it as a
         Sync/Free switch plus a multiplier;
+      - **each track's LFO destination**, as on the hardware (CC 105
+        wrote nothing to the kit when mapped: find where it lives);
    c. the per-track split for "Cycles voice" and "Cycles FX".
 1. Sweep every CC over 0-127 (and note velocity 0, LFO destination) with
    `ccmap.py` so the clamps in `engine_inputs.py` are complete; read the
