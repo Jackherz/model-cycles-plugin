@@ -16,7 +16,7 @@ void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("acce
 
 ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::String& id, const juce::String& label,
                            Style s)
-    : style(s)
+    : style(s), paramID(id)
 {
     caption.setText(label, juce::dontSendNotification);
     caption.setJustificationType(juce::Justification::centred);
@@ -218,6 +218,13 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     // tabs above the panel's edge, so the selected one opens into it
     for (auto* b : tabs)
         addAndMakeVisible(b);
+    helpButton.setClickingTogglesState(true);
+    helpButton.getProperties().set("caption", true);
+    helpButton.onClick = [this] { setHelpMode(helpButton.getToggleState()); };
+    addAndMakeVisible(helpButton);
+    addChildComponent(bubble);
+    // hover anywhere in the editor reaches mouseMove, for the help mode
+    addMouseListener(this, true);
     setSize(kW, kH);
     showPage(0);
     startTimerHz(8);
@@ -253,7 +260,7 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     }
     drawText(g, "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4, kLight);
     auto caps = kTitle.withTrimmedRight(3).withSizeKeepingCentre(kTitle.getWidth() - 6, 16);
-    const char* glyph[] = {"x", "[", "_"};
+    const char* glyph[] = {"x", "[", "_"};   // decorative; the "?" left of them is helpButton
     for (int i = 0; i < 3; ++i)
     {
         auto b = caps.removeFromRight(18);
@@ -307,6 +314,8 @@ void CyclesEmuEditor::resized()
     for (size_t i = 0; i < globals.size(); ++i)
         globals[i]->setBounds(top.removeFromLeft(widths[i]).reduced(4, 0));
     status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
+    // left of the three caption boxes (3 x 18 + 2 px gap, 3 px margin)
+    helpButton.setBounds(kTitle.getRight() - 3 - 56 - 22, kTitle.getY() + 3, 18, 16);
     auto bar = kTabs;
     for (auto* b : tabs)
         b->setBounds(bar.removeFromLeft(120).withTrimmedRight(-1).withHeight(26));
@@ -314,8 +323,109 @@ void CyclesEmuEditor::resized()
         p->setBounds(kPanel.reduced(10, 12));
 }
 
+void CyclesEmuEditor::setHelpMode(bool on)
+{
+    helpMode = on;
+    helpButton.setToggleState(on, juce::dontSendNotification);
+    helpTarget = nullptr;
+    bubble.setVisible(false);
+    timerCallback();
+}
+
+void CyclesEmuEditor::showHelpFor(const juce::String& id)
+{
+    setHelpMode(true);
+    // the visible control with that id (each track page has its own)
+    std::function<ParamControl*(juce::Component&)> find = [&](juce::Component& c) -> ParamControl* {
+        if (!c.isVisible())
+            return nullptr;
+        if (auto* pc = dynamic_cast<ParamControl*>(&c); pc != nullptr && pc->paramID == id)
+            return pc;
+        for (auto* ch : c.getChildren())
+            if (auto* f = find(*ch))
+                return f;
+        return nullptr;
+    };
+    ParamControl* pc = nullptr;
+    for (auto* ch : getChildren())   // (the editor itself is not visible until a host shows it)
+        if (pc == nullptr)
+            pc = find(*ch);
+    updateHelp(pc);
+}
+
+void CyclesEmuEditor::mouseMove(const juce::MouseEvent& e) { updateHelp(e.eventComponent); }
+
+void CyclesEmuEditor::mouseExit(const juce::MouseEvent& e)
+{
+    // leaving the editor altogether (moves between children arrive as enters)
+    if (!getLocalBounds().contains(e.getEventRelativeTo(this).getPosition()))
+        updateHelp(nullptr);
+}
+
+void CyclesEmuEditor::updateHelp(juce::Component* under)
+{
+    if (!helpMode)
+        return;
+    ParamControl* pc = nullptr;
+    for (auto* c = under; c != nullptr && c != this; c = c->getParentComponent())
+        if ((pc = dynamic_cast<ParamControl*>(c)) != nullptr)
+            break;
+    if (pc == helpTarget)
+        return;
+    helpTarget = pc;
+    if (pc == nullptr)
+    {
+        bubble.setVisible(false);
+        return;
+    }
+    // the macros' text depends on the track's machine
+    int machine = 0;
+    if (pc->paramID.length() > 3 && pc->paramID[0] == 't' && pc->paramID[2] == '_')
+        if (auto* m = dynamic_cast<juce::AudioParameterChoice*>(
+                proc.state().getParameter(pc->paramID.substring(0, 3) + "machine")))
+            machine = m->getIndex();
+    bubble.show(helpFor(pc->paramID, machine), getLocalArea(pc, pc->getLocalBounds()),
+                getLocalBounds().reduced(6));
+    bubble.toFront(false);
+}
+
+void HelpBubble::show(const HelpText& t, juce::Rectangle<int> target, juce::Rectangle<int> within)
+{
+    text = t;
+    const int w = 330, pad = 8;
+    int h = pad * 2 + textHeight() + 8 + wrappedHeight(text.body, w - pad * 2);
+    // below the control if it fits, else above; kept inside the window
+    int y = target.getBottom() + 4;
+    if (y + h > within.getBottom())
+        y = target.getY() - 4 - h;
+    int x = juce::jlimit(within.getX(), within.getRight() - w, target.getCentreX() - w / 2);
+    setBounds(x, juce::jmax(within.getY(), y), w, h);
+    setVisible(text.title.isNotEmpty());
+    repaint();
+}
+
+void HelpBubble::paint(juce::Graphics& g)
+{
+    auto r = getLocalBounds();
+    g.setColour(juce::Colour(0xffffffe1));   // Win95 tooltip yellow
+    g.fillRect(r);
+    g.setColour(kDark);
+    g.drawRect(r, 1);
+    auto in = r.reduced(8);
+    auto title = in.removeFromTop(textHeight());
+    drawText(g, text.title, title.getX() + 1, title.getY(), kNavy);   // drawn twice: bold
+    drawText(g, text.title, title.getX(), title.getY(), kNavy);
+    in.removeFromTop(8);
+    drawWrapped(g, text.body, in, kText);
+}
+
 void CyclesEmuEditor::timerCallback()
 {
+    if (helpMode)
+    {
+        status.setText("Help: hover over a control. Click ? again to leave.", juce::dontSendNotification);
+        return;
+    }
     if (proc.engineStatus().isNotEmpty())
         status.setText(proc.engineStatus(), juce::dontSendNotification);
     else

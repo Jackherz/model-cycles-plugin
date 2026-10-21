@@ -31,6 +31,7 @@ void sunken(juce::Graphics&, juce::Rectangle<int>, bool thick = true);
 void groupBox(juce::Graphics&, juce::Rectangle<int>, const juce::String& title, juce::Colour accent);
 // Word-wrapped pixel text, top-left aligned.
 void drawWrapped(juce::Graphics&, const juce::String& s, juce::Rectangle<int> area, juce::Colour, int scale = kPx);
+int wrappedHeight(const juce::String& s, int width, int scale = kPx);
 // The "accent" property of c or its nearest ancestor that has one.
 juce::Colour accentFor(const juce::Component& c);
 // A gradient from a to b, left to right, through a 4x4 Bayer dither in

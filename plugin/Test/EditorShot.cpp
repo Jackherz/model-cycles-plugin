@@ -20,5 +20,19 @@ int main(int argc, char** argv)
         juce::PNGImageFormat().writeImageToStream(img, os);
         std::printf("%s\n", f.getFullPathName().toRawUTF8());
     }
+    // the help mode, as if hovering over a few controls
+    const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"},
+                             {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
+    for (auto& h : help)
+    {
+        e->showPage(juce::String(h[0]).getIntValue());
+        e->showHelpFor(h[1]);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile(juce::String("editor-") + h[2] + ".png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        std::printf("%s\n", f.getFullPathName().toRawUTF8());
+    }
     return 0;
 }

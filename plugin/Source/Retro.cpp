@@ -118,25 +118,44 @@ void drawText(juce::Graphics& g, const juce::String& s, juce::Rectangle<int> are
     drawText(g, t, r.getX(), r.getY(), c, scale);
 }
 
-void drawWrapped(juce::Graphics& g, const juce::String& s, juce::Rectangle<int> area, juce::Colour c, int scale)
+namespace
 {
-    auto words = juce::StringArray::fromTokens(s, " ", "");
+juce::StringArray wrapLines(const juce::String& s, int width, int scale)
+{
+    juce::StringArray lines;
     juce::String line;
-    int y = area.getY();
-    for (auto& w : words)
+    for (auto& w : juce::StringArray::fromTokens(s, " ", ""))
     {
         auto next = line.isEmpty() ? w : line + " " + w;
-        if (line.isNotEmpty() && textWidth(next, scale) > area.getWidth())
+        if (line.isNotEmpty() && textWidth(next, scale) > width)
         {
-            drawText(g, line, area.getX(), y, c, scale);
-            y += textHeight(scale) + 3 * scale;
+            lines.add(line);
             line = w;
         }
         else
             line = next;
     }
     if (line.isNotEmpty())
+        lines.add(line);
+    return lines;
+}
+int lineStep(int scale) { return textHeight(scale) + 3 * scale; }
+} // namespace
+
+void drawWrapped(juce::Graphics& g, const juce::String& s, juce::Rectangle<int> area, juce::Colour c, int scale)
+{
+    int y = area.getY();
+    for (auto& line : wrapLines(s, area.getWidth(), scale))
+    {
         drawText(g, line, area.getX(), y, c, scale);
+        y += lineStep(scale);
+    }
+}
+
+int wrappedHeight(const juce::String& s, int width, int scale)
+{
+    int n = wrapLines(s, width, scale).size();
+    return n == 0 ? 0 : n * lineStep(scale) - 3 * scale;
 }
 
 juce::Colour accentFor(const juce::Component& c)
@@ -436,12 +455,12 @@ void Look::drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::
         g.fillRect(r.getRight() - 2, r.getY() + 2, 1, r.getHeight() - 2);
         return;
     }
-    g.setColour(kFace);
+    g.setColour(on ? kHilite : kFace);
     g.fillRect(r);
-    if (down)
-        sunken(g, r);
+    if (down || on)
+        sunken(g, r, !b.getProperties()["caption"]);
     else
-        raised(g, r);
+        raised(g, r, !b.getProperties()["caption"]);
 }
 
 void Look::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool down)
@@ -450,7 +469,7 @@ void Look::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool dow
     bool tab = b.getProperties()["tab"], on = b.getToggleState();
     if (tab && !on)
         r = r.withTrimmedTop(3).withTrimmedBottom(4);
-    else if (down)
+    else if (down || (on && !tab))
         r.translate(1, 1);
     auto text = b.getButtonText();
     int w = textWidth(text) + (tab ? 14 : 0);

@@ -44,7 +44,7 @@ juce_add_plugin(CyclesEmu
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
 
-target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp)
+target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp)
 target_compile_definitions(CyclesEmu PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
@@ -65,7 +65,7 @@ target_link_libraries(CyclesEmuHostTest PRIVATE mcengine
 
 # Render the editor's pages to PNG, to check the layout without a host.
 juce_add_console_app(CyclesEmuEditorShot PRODUCT_NAME "CyclesEmuEditorShot")
-target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp)
+target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp)
 target_compile_definitions(CyclesEmuEditorShot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine juce::juce_audio_utils
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)

@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "Retro.h"
+#include "Help.h"
 
 // A labelled control bound to one parameter.
 class ParamControl : public juce::Component
@@ -14,6 +15,7 @@ public:
     ParamControl(juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& label, Style);
     void resized() override;
     Style style;
+    juce::String paramID;
 
 private:
     juce::Label caption;
@@ -70,6 +72,18 @@ private:
     juce::Rectangle<int> noteArea;
 };
 
+// The "?" mode's tooltip: a Win95 yellow box with a title and wrapped text.
+class HelpBubble : public juce::Component
+{
+public:
+    HelpBubble() { setInterceptsMouseClicks(false, false); }
+    void show(const cyclesemu::HelpText&, juce::Rectangle<int> target, juce::Rectangle<int> within);
+    void paint(juce::Graphics&) override;
+
+private:
+    cyclesemu::HelpText text;
+};
+
 class CyclesEmuEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -78,14 +92,25 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void showPage(int index);   // 0-5 tracks, 6 FX
+    void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control
+
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseEnter(const juce::MouseEvent& e) override { mouseMove(e); }
+    void mouseExit(const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
+    void setHelpMode(bool on);
+    void updateHelp(juce::Component* under);
 
     CyclesEmuProcessor& proc;
     retro::Look look;
     std::vector<std::unique_ptr<ParamControl>> globals;
     juce::Label status;
+    juce::TextButton helpButton{"?"};
+    HelpBubble bubble;
+    bool helpMode = false;
+    ParamControl* helpTarget = nullptr;
     juce::OwnedArray<juce::TextButton> tabs;
     juce::OwnedArray<juce::Component> pages;
     int current = 0;
