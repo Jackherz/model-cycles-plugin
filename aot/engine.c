@@ -164,6 +164,32 @@ int mc_engine_render(mc_engine *g, float *left, float *right)
     return st;
 }
 
+/* Tempo, as FUN_40058bb4 / FUN_40091780 set it: units of BPM x 120
+ * (30-300 BPM -> 3600-36000). The render advances its musical clock by
+ * twice this every block (0x40149310). The clock source becomes internal
+ * (0x40149314 bit 0; a saved state may follow external MIDI clock, and with
+ * none arriving the clock sits at the 300 BPM maximum). */
+#define TEMPO_SET 0x40140a84u
+#define TEMPO_FOLLOW 0x40140a88u
+#define CLOCK_RATE 0x40149310u
+#define CLOCK_SOURCES 0x40149314u
+
+void mc_engine_set_tempo(mc_engine *g, double bpm)
+{
+    long t = (long)(bpm * 120.0 + 0.5);
+    if (t < 3600) t = 3600;
+    if (t > 36000) t = 36000;
+    mc_st32_raw(g->x, CLOCK_SOURCES, 1);
+    mc_st32_raw(g->x, TEMPO_SET, (uint32_t)t);
+    mc_st32_raw(g->x, TEMPO_FOLLOW, 1);
+    mc_st32_raw(g->x, CLOCK_RATE, (uint32_t)t);
+}
+
+double mc_engine_get_tempo(mc_engine *g)
+{
+    return mc_ld32(g->x, CLOCK_RATE) / 120.0;
+}
+
 int mc_engine_get_param(mc_engine *g, int track, int offset)
 {
     uint32_t a = track < 6 ? g->kit + 0x1c + 100 * track + offset : g->kit + 0x274 + offset;

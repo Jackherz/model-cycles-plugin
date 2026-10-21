@@ -455,8 +455,38 @@ quiet, and a low-frequency build-up appeared while idle.
 - **Level.** Engine levels are those of the device at full volume: one note
   at velocity 127 peaks -4 to -13 dBFS by track (factory kit). New
   **Output Gain** parameter, -24..+24 dB, default 0.
+- **Still open (Jack, 2026-10-21):** an idle hum remains after the DC
+  blocker: an analyser shows energy around 20-80 Hz (peak near 30 Hz) and
+  thin lines near 110 and 260 Hz. It matches the firmware's own idle floor
+  (-62 dBFS here: energy below 60 Hz and a decaying ~258 Hz tone). To do:
+  find which track or effect makes it (mute tracks one by one, sends off).
 - The host test now checks identity in both MIDI modes (through the same
   DC blocker) and the idle mean.
+
+## Step 8: tempo sync (2026-10-21)
+
+- **How tempo reaches the engine.** Tempo is in units of BPM x 120
+  (30-300 BPM = 3600-36000). The setter `FUN_40058bb4(t)` clamps it, stores
+  it at `0x40140a84` and, when `0x40140a88` is set, calls
+  `FUN_40091780(0, t, 0)`, which (if the clock source is internal) stores it
+  in **`0x40149310`**: the render's musical clock advances by twice this
+  every 32-frame block (`0x8000184c`; 1 MIDI clock = 900,000 units, a
+  quarter note 21,600,000). The clock source is the highest set bit of
+  `0x40149314` (bit 0 internal, bit 1 external, `FUN_40091770`). The render
+  itself applies tempo from type-2 sequencer events.
+- The dumped state follows external MIDI clock (the TEMPO page shows EXT);
+  its clock word read 119.55 BPM, and in a live digiemu run with no clock
+  arriving it sat at 36000 (300 BPM).
+- `mc_engine_set_tempo(g, bpm)`: internal source, then the setter's writes.
+  Measured: delay time 16/32/64 echo after 0.53/1.03/2.03 beats at 60, 90
+  and 120 BPM alike (the delay is tempo-synced; the extra 0.03 beat is the
+  onset threshold and the block).
+- Plugin: the host's BPM each call (applied at the next engine block), else
+  the **Tempo** parameter (default 120). Host test: through the plugin with
+  a fixed play head, delay time 64 echoes after 2.032 beats at 120 and at
+  60 BPM. Not yet: following the host's beat position (LFO phase, retrig).
+- Tools: `scripts/tempowatch.py` (panel tempo), `scripts/clockwatch.py`
+  (writes to render inputs while MIDI clock runs).
 
 ## Next steps
 

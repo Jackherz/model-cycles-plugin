@@ -64,6 +64,7 @@ int identity(juce::AudioPluginFormatManager& fm, const juce::String& path, const
     int err = 0;
     mc_engine* g = mc_engine_new(state.toRawUTF8(), &err);
     if (!g) { std::printf("engine state: error %d\n", err); return 1; }
+    mc_engine_set_tempo(g, 120.0);   // as the plugin does with no host tempo
     juce::AudioBuffer<float> buf(2, block);
     float l[32], r[32];
     long diffs = 0, n = 0;
@@ -194,6 +195,73 @@ int idle(juce::AudioPluginFormatManager& fm, const juce::String& path)
                 20 * std::log10(rms + 1e-12), std::abs(mean) < 1e-4 ? "PASS" : "FAIL");
     return std::abs(mean) < 1e-4 ? 0 : 1;
 }
+struct FixedTempo : juce::AudioPlayHead
+{
+    double bpm;
+    explicit FixedTempo(double b) : bpm(b) {}
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo p;
+        p.setBpm(bpm);
+        return p;
+    }
+};
+
+// One kick into the delay (delay time 64 = two beats) with the host at a
+// given tempo; -> the first echo's time in beats (the delay's added signal).
+double echoBeats(juce::AudioPluginFormatManager& fm, const juce::String& path, double bpm)
+{
+    double onset[2] = {0, 0};
+    for (int send = 0; send < 2; ++send)
+    {
+        auto p = load(fm, path, 48000, 128);
+        if (!p) return -1;
+        FixedTempo head(bpm);
+        p->setPlayHead(&head);
+        setParam(*p, "MIDI Mode", 0.0f);
+        setParam(*p, "T1 Machine", 0.0f);
+        setParam(*p, "T1 Decay", 10.0f / 127);
+        setParam(*p, "T1 Delay Send", send ? 1.0f : 0.0f);
+        setParam(*p, "T1 Reverb Send", 0.0f);
+        setParam(*p, "Delay Time", 64.0f / 127);
+        setParam(*p, "Delay Feedback", 60.0f / 127);
+        for (int t = 2; t <= 6; ++t)
+            setParam(*p, "T" + juce::String(t) + " Mute", 1.0f);
+        p->prepareToPlay(48000, 128);
+        juce::AudioBuffer<float> buf(2, 128);
+        std::vector<float> out;
+        for (int b = 0; b < 375 * 4; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (b == 375)
+                midi.addEvent(juce::MidiMessage::noteOn(1, 36, (juce::uint8)127), 0);
+            buf.clear();
+            p->processBlock(buf, midi);
+            if (b >= 375)
+                out.insert(out.end(), buf.getReadPointer(0), buf.getReadPointer(0) + 128);
+        }
+        static std::vector<float> dry;
+        if (send == 0)
+            dry = out;
+        else
+        {
+            float mx = 0;
+            for (size_t i = 0; i < out.size(); ++i) mx = std::max(mx, std::abs(out[i] - dry[i]));
+            for (size_t i = 0; i < out.size(); ++i)
+                if (std::abs(out[i] - dry[i]) > 0.05f * mx) { onset[1] = (double)i / 48000; break; }
+        }
+    }
+    return onset[1] * bpm / 60.0;
+}
+
+int tempo(juce::AudioPluginFormatManager& fm, const juce::String& path)
+{
+    double a = echoBeats(fm, path, 120), b = echoBeats(fm, path, 60);
+    bool ok = std::abs(a - b) < 0.02 && std::abs(a - 2.0) < 0.1;
+    std::printf("tempo: delay time 64 echoes after %.3f beats at 120 BPM, %.3f at 60 BPM -> %s\n",
+                a, b, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -210,6 +278,7 @@ int main(int argc, char** argv)
     int rc = identity(fm, path, state, false);
     rc |= identity(fm, path, state, true);
     rc |= idle(fm, path);
+    rc |= tempo(fm, path);
     rc |= load_test(fm, path, 48000, outDir.getChildFile("hosttest-48k.wav"));
     rc |= load_test(fm, path, 44100, outDir.getChildFile("hosttest-44k1.wav"));
     return rc;

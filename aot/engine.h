@@ -21,6 +21,9 @@ int mc_engine_level(mc_engine *g, int track, int value);
 int mc_engine_mute(mc_engine *g, int track, int muted);
 int mc_engine_note(mc_engine *g, int track, int note, int velocity, int on, uint32_t trig_flags);
 int mc_engine_render(mc_engine *g, float *left, float *right);   /* 32 frames, 48 kHz */
+/* Tempo in BPM (30-300), on the engine's internal clock. */
+void mc_engine_set_tempo(mc_engine *g, double bpm);
+double mc_engine_get_tempo(mc_engine *g);
 /* Current values (0-127) as stored in the kit. */
 int mc_engine_get_param(mc_engine *g, int track, int offset);
 int mc_engine_get_level(mc_engine *g, int track);

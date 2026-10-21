@@ -8,6 +8,8 @@
 //    Track" chromatically.
 //  - Ch 1-6 = Tracks: channels 1-6 play tracks 1-6 chromatically, as the
 //    hardware does.
+// Tempo: the host's BPM when it has one, else the Tempo parameter, on the
+// engine's internal clock (tempo-synced LFOs and the delay follow it).
 // CCs on channels 1-6 set that track (NOTES.md, CC table), clamped as the
 // firmware clamps them; FX CCs work on any of those channels. Every sound and FX parameter is also a host parameter, initialised
 // from the loaded kit. The engine renders 32-frame blocks at 48 kHz; events
@@ -95,6 +97,12 @@ public:
         midiMode = apvts.getRawParameterValue("midimode");
         keysTrack = apvts.getRawParameterValue("keystrack");
         outGain = apvts.getRawParameterValue("outgain");
+        tempoParam = apvts.getRawParameterValue("tempo");
+        if (engine != nullptr)
+        {
+            mc_engine_set_tempo(engine, 120.0);   // internal clock; a saved state may wait for MIDI clock
+            appliedBpm = 120.0;
+        }
         for (auto& s : slots)
         {
             s.param = apvts.getParameter(s.id);
@@ -142,6 +150,10 @@ public:
             juce::ParameterID{"midimode", 1}, "MIDI Mode",
             juce::StringArray{"Drum Map (C1-F1 = tracks)", "Ch 1-6 = Tracks"}, 0));
         layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"tempo", 1}, "Tempo (without host tempo)",
+            juce::NormalisableRange<float>(30.0f, 300.0f, 0.01f), 120.0f,
+            juce::AudioParameterFloatAttributes().withLabel("BPM")));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"outgain", 1}, "Output Gain",
             juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
@@ -271,6 +283,11 @@ public:
     void renderEngineBlock()
     {
         applyParameterChanges();
+        if (std::abs(targetBpm - appliedBpm) > 1e-4)
+        {
+            mc_engine_set_tempo(engine, targetBpm);
+            appliedBpm = targetBpm;
+        }
         if (mc_engine_render(engine, blockL, blockR) != 0)
         {
             std::fill(std::begin(blockL), std::end(blockL), 0.0f);
@@ -300,6 +317,12 @@ public:
         }
         float* outL = buffer.getWritePointer(0);
         float* outR = buffer.getWritePointer(1);
+
+        targetBpm = tempoParam->load();
+        if (auto* ph = getPlayHead())
+            if (auto pos = ph->getPosition())
+                if (auto bpm = pos->getBpm())
+                    targetBpm = juce::jlimit(30.0, 300.0, *bpm);
 
         if (!resample)
         {
@@ -385,6 +408,8 @@ private:
     std::atomic<float>* midiMode = nullptr;
     std::atomic<float>* keysTrack = nullptr;
     std::atomic<float>* outGain = nullptr;
+    std::atomic<float>* tempoParam = nullptr;
+    double targetBpm = 120.0, appliedBpm = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CyclesEmuProcessor)
 };
