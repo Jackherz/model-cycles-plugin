@@ -621,6 +621,14 @@ control and parameter binding is the same as before.
       - **each track's LFO destination**, as on the hardware (CC 105
         wrote nothing to the kit when mapped: find where it lives);
    c. the per-track split for "Cycles voice" and "Cycles FX".
+   d. **a "?" help button** (Jack, 2026-10-22). While it is on, hovering
+      over any parameter explains what it is and how it works, e.g. what
+      Color does on each machine, or Sync/Free plus the multiplier.
+      Planned: a Win95 "What's This?" style toggle in the title bar or the
+      toolbar, and a yellow tooltip box in the pixel font. The text comes
+      from a per-parameter help field on ParamDef, with machine-dependent
+      text where the firmware differs per machine. Do it in the shared
+      editor code so Voice and FX get it too.
 1. Sweep every CC over 0-127 (and note velocity 0, LFO destination) with
    `ccmap.py` so the clamps in `engine_inputs.py` are complete; read the
    pattern's per-track trig flags for all six tracks.
