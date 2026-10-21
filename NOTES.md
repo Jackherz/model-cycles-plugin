@@ -455,7 +455,7 @@ quiet, and a low-frequency build-up appeared while idle.
 - **Level.** Engine levels are those of the device at full volume: one note
   at velocity 127 peaks -4 to -13 dBFS by track (factory kit). New
   **Output Gain** parameter, -24..+24 dB, default 0.
-- **Still open (Jack, 2026-10-21):** an idle hum remains after the DC
+- **(Fixed in step 9)** an idle hum remained after the DC
   blocker: an analyser shows energy around 20-80 Hz (peak near 30 Hz) and
   thin lines near 110 and 260 Hz. It matches the firmware's own idle floor
   (-62 dBFS here: energy below 60 Hz and a decaying ~258 Hz tone). To do:
@@ -488,11 +488,44 @@ quiet, and a low-frequency build-up appeared while idle.
 - Tools: `scripts/tempowatch.py` (panel tempo), `scripts/clockwatch.py`
   (writes to render inputs while MIDI clock runs).
 
+## Step 9: the idle hum was a frozen reverb (2026-10-21)
+
+- Idle, the hum (20-80 Hz, lines near 110/260 Hz, -62 dBFS) did not change
+  with all tracks muted, all sends off or delay feedback 0, and vanished
+  with **reverb size 0**: the reverb's own output.
+- **Reverb size 127 never decays** (as emulated): a Kick into full send
+  holds at -21 dB indefinitely; at size 120 the same tail is gone after
+  ~25 s, at 100 after ~10 s, at 20-64 after a few seconds. With size 127 and
+  **tone 64 it grows** to about -4 dB. The factory kit in the saved state
+  has reverb size 127, so the reverb held the tail of the pattern that was
+  playing when the state was captured. **To check on the hardware:** does
+  the Model:Cycles' reverb at size 127 freeze, and does tone 64 make it
+  grow? If not, the emulated EMAC arithmetic is suspect (the DC drift of
+  step 7 may be the same cause).
+- The reverb's state is `0x4a300000-0x4a3ecfff` (the output ring follows
+  at `0x4a3ed080`); the delay lines are the 4 MB eDMA ring `0x4a400000`.
+  Clearing the reverb region drops the idle floor from -57.5 to -98.6 dB and
+  changes a dry note by at most one LSB. `mc_engine_new` now clears both, so
+  the engine starts with silent effects; the plugin's idle floor is
+  -107.6 dBFS.
+- MIDI notes hold until their note-off (the firmware's MIDI request has
+  length -1): in tests, send note-offs, or every machine sounds forever.
+
 ## Next steps
 
-0. (done, v0.1) CyclesEmu plugin. Next: try it in a DAW; tempo/clock;
-   custom editor; then the per-track split for "Cycles voice" and
-   "Cycles FX".
+0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
+   a. (done, step 9) the idle hum: the reverb at size 127 froze the
+      captured tail; effects now start silent;
+   b. a proper editor, with
+      - **a button: follow the host tempo, or not** (then the Tempo
+        parameter rules even inside a DAW);
+      - **each track's LFO synced to tempo or free running, as the
+        firmware offers.** The LFO Multiplier takes 0-23 (measured clamp),
+        likely 12 synced multipliers (x1..x2k) and 12 free-running ones
+        (.1...2k, fixed rate) as on other Elektron machines: verify the
+        mapping by measuring LFO rate against tempo, then expose it as a
+        Sync/Free switch plus a multiplier;
+   c. the per-track split for "Cycles voice" and "Cycles FX".
 1. Sweep every CC over 0-127 (and note velocity 0, LFO destination) with
    `ccmap.py` so the clamps in `engine_inputs.py` are complete; read the
    pattern's per-track trig flags for all six tracks.

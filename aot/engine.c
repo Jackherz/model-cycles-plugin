@@ -59,6 +59,13 @@ mc_engine *mc_engine_new(const char *dir, int *err)
     fclose(f);
     g->kit = mc_ld32(g->x, KIT_PTR);
     memset(g->x->mem + SCRATCH, 0, 0x10000);         /* fault the scratch pages in now */
+    /* Start with silent effects. The state was saved while the factory
+     * pattern played, and its kit's reverb size is 127, at which the reverb
+     * never decays: the old tail would hum forever (NOTES.md step 9). The
+     * reverb's state is 0x4a300000-0x4a3ecfff (the output ring follows at
+     * 0x4a3ed080); the delay lines are the 4 MB eDMA ring at 0x4a400000. */
+    memset(g->x->mem + 0x4a300000u, 0, 0x4a3ed000u - 0x4a300000u);
+    memset(g->x->mem + 0x4a400000u, 0, 0x400000u);
     if (err) *err = 0;
     return g;
 fail:
