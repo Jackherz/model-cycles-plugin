@@ -1,0 +1,19 @@
+# Elektron firmware and anything derived from it: never commit.
+firmware/
+data/
+*.syx
+*.snap
+*.img
+*.wav
+notes/*.json
+notes/ghidra-*.txt
+notes/*.log
+# Separate upstream checkouts
+re/
+build/
+.DS_Store
+__pycache__/
+plugin/build/
+plugin/build*.log
+# Screenshots of the firmware's display
+notes/*.png
