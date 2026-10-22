@@ -468,6 +468,39 @@ int main(int argc, char** argv)
         }
     }
 
+    // the LFO destination list follows the machine: track 1 on SD Vintage
+    // names Shape "Freq Complex", and on Kick again "Shape"
+    {
+        e->showPage(0);
+        std::function<ParamControl*(juce::Component&)> find = [&](juce::Component& c) -> ParamControl* {
+            if (c.getProperties()["helpId"].toString() == "t1_lfodest")
+                if (auto* pc = dynamic_cast<ParamControl*>(&c))
+                    return pc;
+            for (auto* ch : c.getChildren())
+                if (auto* f = find(*ch))
+                    return f;
+            return nullptr;
+        };
+        ParamControl* dest = nullptr;
+        for (auto* ch : e->getChildren())
+            if (dest == nullptr)
+                dest = find(*ch);
+        const juce::String machine0 = juce::String(juce::roundToInt(proc.state().getRawParameterValue("t1_machine")->load()));
+        cyclesemu::setPlain(proc.state(), "t1_machine", 6);
+        cyclesemu::setPlain(proc.state(), "t1_lfodest", 3);
+        const auto sdv = dest ? dest->itemText(3) : juce::String("?");
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-lfo-dest-sdvintage.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        cyclesemu::setPlain(proc.state(), "t1_machine", 0);
+        const auto kick = dest ? dest->itemText(3) : juce::String("?");
+        std::printf("lfo destination 3: on SD Vintage \"%s\", on Kick \"%s\" -> %s\n", sdv.toRawUTF8(),
+                    kick.toRawUTF8(), sdv == "Freq Complex" && kick == "Shape" ? "PASS" : "FAIL");
+        cyclesemu::setPlain(proc.state(), "t1_machine", machine0.getFloatValue());
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"7", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

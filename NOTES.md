@@ -1166,6 +1166,22 @@ audio can be added there mid-render.
   (`Knob::snapValue`, `snapPoints`); Alt turns it freely.
 - LFO speed snaps the same way to 64 ±4, 8, 16, 32, 48 and the ends.
 
+## Step 26: LFO destination names follow the machine (2026-10-23)
+
+Jack's report: the LFO page kept naming the destinations Color, Shape,
+Sweep, Contour and Punch whatever the machine. On the Syntakt engines they
+are other parameters: SD Vintage's Shape is Freq Complex, SY Bits' Punch is
+Bit Redux.
+- The track page's machine listener (the one that relabels the knobs) also
+  renames those five entries of the Destination list (2-6,
+  `ParamControl::setItemText`).
+- The LFO display's destination tag uses the same names
+  (`LfoScope::destName`).
+- This works in CyclesEmu and CyclesVoice.
+- The listener's first update now runs after the list exists.
+- EditorShot: track 1 on SD Vintage lists "Freq Complex", and on Kick
+  "Shape" again.
+
 ## Next steps
 
 

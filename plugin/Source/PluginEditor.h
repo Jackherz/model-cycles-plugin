@@ -32,6 +32,8 @@ public:
                  cyclesemu::IconSet icons = cyclesemu::IconSet::Machine);
     void resized() override;
     void setLabel(const juce::String&);   // a new caption (knobs, toggles)
+    void setItemText(int index, const juce::String&);   // a choice's entry, as shown
+    juce::String itemText(int index) const;
     Style style;
     juce::String paramID;
     int preferredWidth = 0;   // in a row without knobs; 0 shares the rest
@@ -138,6 +140,10 @@ private:
     int track;
     std::atomic<float>* raw[9];
     State shown{};
+
+public:
+    // the destination's name as the track's machine calls it
+    std::function<juce::String(int destIndex)> destName;
 };
 
 // The tempo as a Metal Gear Solid Codec: a TEMPO plate, a screen with
@@ -196,6 +202,7 @@ private:
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
+    ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
     juce::Random rng;
     std::unique_ptr<juce::ParameterAttachment> machineAtt;
     ParamControl* make(juce::AudioProcessorValueTreeState&, int track, const char* id, const juce::String& label,

@@ -122,6 +122,15 @@ void ParamControl::setLabel(const juce::String& text)
         caption.setText(text, juce::dontSendNotification);
 }
 
+void ParamControl::setItemText(int index, const juce::String& text)
+{
+    box.changeItemText(index + 1, text);
+    if (box.getSelectedItemIndex() == index)   // the shown text too
+        box.setText(text, juce::dontSendNotification);
+}
+
+juce::String ParamControl::itemText(int index) const { return box.getItemText(index); }
+
 void ParamControl::resized()
 {
     auto r = getLocalBounds();
@@ -392,7 +401,7 @@ void LfoScope::paint(juce::Graphics& g)
     curve([&](double t) { return valueAt(s, t, window); }, kLcdText);
     // the destination, tagged on the plot like the scope's "FLY"
     {
-        const auto tag = "> " + kLfoDestNames[s.dest];
+        const auto tag = "> " + (destName ? destName(s.dest) : kLfoDestNames[s.dest]);
         auto box = juce::Rectangle<int>(0, 0, textWidth(tag) + 8, textHeight() + 4)
                        .withPosition(p.getRight() - textWidth(tag) - 10, p.getBottom() - textHeight() - 6);
         g.setColour(kCodecBg);
@@ -634,18 +643,35 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                 {"Detune", "Balance", "Rate Rx", "Wave", "Bits"},
                 {"Nse Mod", "Det Anm", "Detune", "Osc Mix", "Sub"},
             };
+            // and the LFO's destinations for them (entries 2-6: color, shape,
+            // sweep, contour, punch), longer names where the list has room
+            static const char* dests[6][5] = {
+                {"Color", "Shape", "Sweep", "Contour", "Punch"},
+                {"Inharm", "Freq Complex", "Pitch Sweep", "Mod Envelope", "Punch"},
+                {"Body Char", "Balance", "Spacing Crnch", "Body Envelope", "Punch"},
+                {"Form", "Impact", "Bright", "Partial Decay", "Punch"},
+                {"Detune", "Balance", "Rate Redux", "Waveform", "Bit Redux"},
+                {"Noise Mod", "Detune Anim", "Detune", "Osc Mix", "Sub-octave"},
+            };
             int m = juce::roundToInt(v), row = m < 6 ? 0 : m - 5;
             for (int i = 0; i < 5; ++i)
+            {
                 macroKnobs[i]->setLabel(labels[row][i]);
+                if (destControl != nullptr)
+                    destControl->setItemText(2 + i, dests[row][i]);
+            }
+            scope.repaint();   // its destination tag
         },
         nullptr);
-    machineAtt->sendInitialUpdate();
     sound.addRow({make(st, t, "voldist", "Vol+Dst", S::Knob), make(st, t, "pan", "Pan", S::Knob),
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});
     lfo.addRow({make(st, t, "lfowave", "Wave", S::Icons, IconSet::Wave),
                 make(st, t, "lforeset", "Trig", S::Icons, IconSet::Trig)});
     auto* dest = make(st, t, "lfodest", "Destination", S::Choice);
+    destControl = dest;
+    scope.destName = [this](int i) { return destControl->itemText(i); };
+    machineAtt->sendInitialUpdate();   // now that the destination list exists too
     auto* mult = make(st, t, "lfomult", "Mult", S::Choice);
     mult->preferredWidth = 84;
     lfo.addRow({make(st, t, "lfosync", "", S::Icons, IconSet::Clock), mult, dest});
