@@ -468,6 +468,47 @@ int main(int argc, char** argv)
         }
     }
 
+    // the LFO reaches each destination: the engine's value is the list's, and
+    // the smoothed word that moves is that parameter's (k = value), not pan's
+    int lfoBad = 0;
+    for (int destIndex : {13, 14, 15, 16, 17})   // Pan, Filt Cutoff, Reso, Env, Decay
+    {
+        CyclesEmuProcessor f(Product::Full);
+        cyclesemu::setPlain(f.state(), "t1_lfodest", (float)destIndex);
+        cyclesemu::setPlain(f.state(), "t1_lfodepth", 127);
+        cyclesemu::setPlain(f.state(), "t1_lfospeed", 120);
+        cyclesemu::setPlain(f.state(), "t1_lfosync", 1);
+        cyclesemu::setPlain(f.state(), "t1_lfomult", 6);
+        cyclesemu::setPlain(f.state(), "t1_lfowave", 0);    // triangle
+        cyclesemu::setPlain(f.state(), "t1_lforeset", 0);   // free
+        cyclesemu::setPlain(f.state(), "midimode", 1);
+        f.prepareToPlay(48000, 32);
+        juce::AudioBuffer<float> buf(2, 32);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+        int lo[33], hi[33];
+        std::fill(lo, lo + 33, 1 << 20);
+        std::fill(hi, hi + 33, -(1 << 20));
+        for (int b = 0; b < 3000; ++b)
+        {
+            buf.clear();
+            f.processBlock(buf, midi);
+            midi.clear();
+            if (b > 100)
+                for (int k = 0; k < 33; ++k)
+                {
+                    const uint32_t a = 0x8000100cu + 14u + 2u * (uint32_t)k;
+                    const int w = (int16_t)((f.peek(a) << 8) | f.peek(a + 1));
+                    lo[k] = std::min(lo[k], w), hi[k] = std::max(hi[k], w);
+                }
+        }
+        const int want = cyclesemu::kLfoDestValues[destIndex];
+        const bool moves = hi[want] != lo[want], panMoves = want != 22 && hi[22] != lo[22];
+        lfoBad += f.engineValue(0, 0x1c) != want || !moves || panMoves;
+    }
+    std::printf("lfo destinations Pan and the four filter ones each move their own word, not pan's -> %s\n",
+                lfoBad == 0 ? "PASS" : "FAIL");
+
     // the LFO destination list follows the machine: track 1 on SD Vintage
     // names Shape "Freq Complex", and on Kick again "Shape"
     {

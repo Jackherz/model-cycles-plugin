@@ -70,7 +70,7 @@ const ParamDef kTrackParams[] = {
     {"lfowave", "LFO Waveform", 0x1e, 0, 6, 106, Kind::Sound, Show::Plain},
     {"lfosync", "LFO Sync", 0x18, 0, 1, -1, Kind::LfoSync, Show::Plain},
     {"lfomult", "LFO Multiplier", 0x18, 0, 11, 103, Kind::LfoMult, Show::Plain},
-    {"lfodest", "LFO Destination", 0x1c, 0, 13, 105, Kind::LfoDest, Show::Plain},
+    {"lfodest", "LFO Destination", 0x1c, 0, kNumLfoDests - 1, 105, Kind::LfoDest, Show::Plain},   // index into kLfoDestValues
     {"lforeset", "LFO Trig Mode", 0x22, 0, 4, 108, Kind::Sound, Show::Plain},
     {"lfospeed", "LFO Speed", 0x16, 0, 127, 102, Kind::Sound, Show::Bipolar},
     {"lfodepth", "LFO Depth", 0x24, 0, 127, 109, Kind::Sound, Show::Bipolar},

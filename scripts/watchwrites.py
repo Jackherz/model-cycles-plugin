@@ -42,6 +42,12 @@ def calls(func, n):
 
 
 def main():
+    # --cc CH:CC:VAL (repeatable) and --note CH:NOTE:VEL first, as capture.py
+    ccs, notes = [], []
+    while len(sys.argv) > 2 and sys.argv[1] in ('--cc', '--note'):
+        (ccs if sys.argv[1] == '--cc' else notes).append(sys.argv[2])
+        del sys.argv[1:3]
+    emuhost.SETUP = (ccs, notes)
     if sys.argv[1] == '--call':
         return calls(int(sys.argv[2], 16), emuhost.parse_n(sys.argv[3]) if len(sys.argv) > 3 else 40_000_000)
     lo, hi = int(sys.argv[1], 16), int(sys.argv[2], 16)
@@ -60,6 +66,12 @@ def main():
     def on_machine(m):
         m.uc.hook_add(UC_HOOK_MEM_WRITE, on_write, begin=lo, end=hi)
     emu = emuhost.start(on_machine)
+    time.sleep(1.0)
+    ccs, notes = getattr(emuhost, 'SETUP', ([], []))
+    emuhost.send_ccs(emu, ccs)
+    emuhost.note_ons(emu, notes)
+    seen.clear()
+    first.clear()
     t0 = emu.stats['instrs']
     while emu.stats['instrs'] - t0 < n:
         time.sleep(0.2)

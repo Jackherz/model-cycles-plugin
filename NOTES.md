@@ -1182,6 +1182,25 @@ Bit Redux.
 - EditorShot: track 1 on SD Vintage lists "Freq Complex", and on Kick
   "Shape" again.
 
+## Step 27: LFO to the filter moved pan instead (2026-10-23)
+
+Jack's report: an LFO aimed at Filt Cutoff panned the sound as Depth rose.
+- **Cause, in the plugin**: the LFO destination's ParamDef still declared
+  its range as 0-13 (14 entries, from before step 17's four filter
+  destinations), and `applyToEngine` clamps to the declared range. Entries
+  14-17 (the filter's) became 13, which is Pan (k22).
+- Fix: `hi = kNumLfoDests - 1`.
+- How it was found:
+  - The firmware's CC 105 path writes exactly what the plugin does
+    (`kitw 0x1c00`, `setparam(0x1c00, t, 4)`; `scripts/watchwrites.py` now
+    takes `--cc` and `--note`).
+  - In digiemu the LFO's writer (`0x40091d16`) lands on k22 for value 22
+    and on k28 for value 28, so the firmware is right.
+  - The engine's destination word in the plugin read 22 for Filt Cutoff.
+- EditorShot: for Pan and each filter destination, the engine holds the
+  list's value and the LFO moves that parameter's smoothed word, and pan's
+  only for Pan.
+
 ## Next steps
 
 
@@ -1253,7 +1272,8 @@ Bit Redux.
       - The DN2's types (its NOTES, sound record `0xb4 + 2r`): 0
         Multimode, 1 Lowpass 4, 2 Equalizer, 3 Comb-, 4 Legacy (LP/HP),
         5 Comb+.
-   j. **Legato and portamento, as on the Syntakt** (Jack, 2026-10-23).
+   j. **Legato and portamento, as on the Syntakt** (Jack, 2026-10-23; base
+      them on the Syntakt's / Digitone II's behaviour, not the Cycles').
       Not in the Model:Cycles firmware: plugin-side, a held note's new note
       re-pitches the sounding voice (no retrigger), gliding its Pitch / Fine
       Tune words over a Glide time.
