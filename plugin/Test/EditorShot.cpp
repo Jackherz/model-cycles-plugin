@@ -20,6 +20,24 @@ int main(int argc, char** argv)
         juce::PNGImageFormat().writeImageToStream(img, os);
         std::printf("%s\n", f.getFullPathName().toRawUTF8());
     }
+    // the LFO display with every setting in play: triangle x4 at speed +32
+    // (one cycle a bar), trig mode Trig, start phase 32 (a quarter), fade in
+    auto set = [&](const char* id, float v) {
+        auto* p = proc.state().getParameter(id);
+        p->setValueNotifyingHost(p->convertTo0to1(v));
+    };
+    set("t1_lfowave", 0); set("t1_lforeset", 1); set("t1_lfosync", 0); set("t1_lfomult", 2);
+    set("t1_lfospeed", 96); set("t1_lfodepth", 112); set("t1_lfofade", 40); set("t1_lfophase", 32);
+    set("t1_lfodest", 4);
+    e->showPage(0);
+    {
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-lfo-demo.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

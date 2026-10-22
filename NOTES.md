@@ -622,6 +622,44 @@ says how to leave the mode.
   `showHelpFor(id)` does the same for the PNG renderer, which writes
   `notes/editor-help-*.png`.
 
+## Step 14: Fors-style symbols and the LFO display (2026-10-22)
+
+Ideas taken from Fors' plugins:
+- Tela gives every parameter a pictogram (a dot grid for Gap, nested
+  squares for Damp).
+- Pivot draws each operator's waveform and envelope as a small graph.
+- Opal has a large waveform display and a column of machine icons.
+
+What changed here, kept to the Win95/PS1 look:
+- **Pictogram buttons** (`Icons.cpp`, 9x9 pixel icons; `IconButton`,
+  `ParamControl::Style::Icons`), replacing four dropdowns:
+  - Machine: Kick rings, Snare noise, Metal nested squares, Perc diamond,
+    Tone sine, Chord stacked bars.
+  - LFO waveform: drawn from the same functions as the display.
+  - Trig mode: a bar marks the note, then free, restart, hold, one cycle
+    or half a cycle.
+  - Sync/Free: a crotchet, or an infinity loop.
+  A selected icon is a sunken LCD with green pixels, like the value
+  readouts.
+- **LFO display** (`LfoScope`): two cycles from the note.
+  - The LFO as it plays (depth and its sign, start phase, fade, direction
+    from the sign of speed, trig mode) over a faint trace of the plain
+    waveform.
+  - Header: the waveform, the cycle length (bars or beats when synced,
+    Hz when free or very fast) and the destination.
+  - A white dot marks the estimated position. It is computed from engine
+    time since the track's last note-on (`secondsSinceTrig`, two relaxed
+    atomics in the audio thread), or since start in Free mode. It is not
+    read from the firmware.
+  - It checks at 30 Hz while visible and repaints only on change. With no
+    host running, it stays idle.
+  - Rate is exact (step 11's measurement): speed x multiplier / 128
+    cycles a bar.
+  - **Approximate:** the fade time scale is drawn as |fade|/64 of the
+    window, and the Saw direction and the Env, Ramp and Random shapes
+    (`LfoShape.h`) follow other Elektron machines.
+- `notes/editor-lfo-demo.png` sets every LFO setting and renders the result.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

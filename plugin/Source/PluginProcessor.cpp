@@ -318,6 +318,8 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         if (track < 0 || track >= kTracks)
             return;
         mc_engine_note(engine, track, note, m.isNoteOn() ? m.getVelocity() : 0, m.isNoteOn() ? 1 : 0, 0x0681);
+        if (m.isNoteOn())
+            trigBlock[track].store(engineBlocks.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return;
     }
     if (ch < 0 || ch >= kTracks || !m.isController())
@@ -376,6 +378,7 @@ bool CyclesEmuProcessor::isBusesLayoutSupported(const BusesLayout& layouts) cons
 
 void CyclesEmuProcessor::renderEngineBlock()
 {
+    engineBlocks.fetch_add(1, std::memory_order_relaxed);
     applyParameterChanges();
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {

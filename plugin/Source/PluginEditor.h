@@ -6,19 +6,40 @@
 #include "PluginProcessor.h"
 #include "Retro.h"
 #include "Help.h"
+#include "Icons.h"
 
-// A labelled control bound to one parameter.
+// A pictogram button (Icons.h): raised, or a sunken LCD when selected.
+class IconButton : public juce::Button
+{
+public:
+    IconButton(cyclesemu::IconSet s, int i) : juce::Button({}), set(s), index(i) {}
+    void paintButton(juce::Graphics&, bool over, bool down) override;
+
+private:
+    cyclesemu::IconSet set;
+    int index;
+};
+
+// A labelled control bound to one parameter. Icons: a row of pictogram
+// buttons for a choice, captioned with the label and the chosen name.
 class ParamControl : public juce::Component
 {
 public:
-    enum class Style { Knob, Choice, Toggle };
-    ParamControl(juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& label, Style);
+    enum class Style { Knob, Choice, Toggle, Icons };
+    ParamControl(juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& label, Style,
+                 cyclesemu::IconSet icons = cyclesemu::IconSet::Machine);
     void resized() override;
     Style style;
     juce::String paramID;
+    int preferredWidth = 0;   // in a row without knobs; 0 shares the rest
+
+    static constexpr int kIcon = 24;
 
 private:
     juce::Label caption;
+    juce::String label;
+    std::vector<std::unique_ptr<IconButton>> icons;
+    std::unique_ptr<juce::ParameterAttachment> iconAtt;
     juce::Slider knob;
     juce::ComboBox box;
     juce::ToggleButton toggle;
@@ -36,27 +57,71 @@ public:
     {
         for (auto* c : row)
             addAndMakeVisible(c);
-        rows.push_back(std::move(row));
+        rows.push_back({std::move(row), nullptr, 0});
+    }
+    // a component of its own, as tall as `minHeight` or what knob rows spare
+    void addCustomRow(juce::Component* c, int minHeight)
+    {
+        addAndMakeVisible(c);
+        rows.push_back({{}, c, minHeight});
     }
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
+    struct Row
+    {
+        std::vector<ParamControl*> controls;
+        juce::Component* custom;
+        int minHeight;
+    };
     juce::String title;
-    std::vector<std::vector<ParamControl*>> rows;
+    std::vector<Row> rows;
+};
+
+// The LFO as it will play: the waveform with depth, start phase, fade,
+// direction and trig mode applied, the ghost of the plain waveform behind
+// it, and a dot at the LFO's estimated position (from the time since the
+// track's last note and the rate). Redrawn only when something changes.
+class LfoScope : public juce::Component, private juce::Timer
+{
+public:
+    LfoScope(CyclesEmuProcessor&, int track);
+    void paint(juce::Graphics&) override;
+
+private:
+    struct State
+    {
+        int wave, trig, sync, mult, dest, speed, depth, fade, phase;
+        double bpm;
+        auto key() const { return std::tie(wave, trig, sync, mult, dest, speed, depth, fade, phase, bpm); }
+        bool operator!=(const State& o) const { return key() != o.key(); }
+    };
+    State read() const;
+    double cyclesPerSecond(const State&) const;
+    float valueAt(const State&, double cycles) const;   // -1..1, cycles since the trig
+    void timerCallback() override;
+    juce::Rectangle<int> plotArea() const;
+
+    CyclesEmuProcessor& proc;
+    int track;
+    std::atomic<float>* raw[9];
+    State shown{};
+    int dotX = -1;
 };
 
 class TrackPage : public juce::Component
 {
 public:
-    TrackPage(juce::AudioProcessorValueTreeState&, int track);
+    TrackPage(CyclesEmuProcessor&, int track);
     void resized() override;
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
     Section sound{"SOUND"}, lfo{"LFO"};
+    LfoScope scope;
     ParamControl* make(juce::AudioProcessorValueTreeState&, int track, const char* id, const juce::String& label,
-                       ParamControl::Style);
+                       ParamControl::Style, cyclesemu::IconSet = cyclesemu::IconSet::Machine);
 };
 
 class FxPage : public juce::Component

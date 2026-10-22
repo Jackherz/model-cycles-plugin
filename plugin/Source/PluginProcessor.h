@@ -76,6 +76,13 @@ public:
     juce::AudioProcessorValueTreeState& state() { return apvts; }
     const juce::String& engineStatus() const { return engineError; }
     double currentBpm() const { return shownBpm.load(); }
+    // For the editor's LFO display: seconds of engine time since the
+    // track's last note-on, or since the engine started.
+    double secondsSinceTrig(int track) const
+    {
+        return (double)(engineBlocks.load() - trigBlock[track].load()) * cyclesemu::kBlock / 48000.0;
+    }
+    double secondsRunning() const { return (double)engineBlocks.load() * cyclesemu::kBlock / 48000.0; }
 
 private:
     struct Slot
@@ -116,6 +123,8 @@ private:
     std::atomic<float>* followHost = nullptr;
     double targetBpm = 120.0, appliedBpm = 0.0;
     std::atomic<double> shownBpm{120.0};
+    std::atomic<int64_t> engineBlocks{0};
+    std::atomic<int64_t> trigBlock[cyclesemu::kTracks] = {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CyclesEmuProcessor)
 };

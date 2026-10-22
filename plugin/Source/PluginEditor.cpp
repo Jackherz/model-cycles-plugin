@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "LfoShape.h"
 
 using namespace cyclesemu;
 using namespace retro;
@@ -14,9 +15,26 @@ constexpr int kLogoW = 220;
 void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
 } // namespace
 
-ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::String& id, const juce::String& label,
-                           Style s)
-    : style(s), paramID(id)
+void IconButton::paintButton(juce::Graphics& g, bool, bool down)
+{
+    auto r = getLocalBounds();
+    if (getToggleState())
+    {
+        g.setColour(kLcd);
+        g.fillRect(r);
+        sunken(g, r);
+        drawIcon(g, set, index, r.translated(1, 1), kLcdText);
+        return;
+    }
+    g.setColour(kFace);
+    g.fillRect(r);
+    down ? sunken(g, r) : raised(g, r);
+    drawIcon(g, set, index, down ? r.translated(1, 1) : r, kText);
+}
+
+ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::String& id, const juce::String& lbl,
+                           Style s, IconSet iconSet)
+    : style(s), paramID(id), label(lbl)
 {
     caption.setText(label, juce::dontSendNotification);
     caption.setJustificationType(juce::Justification::centred);
@@ -43,6 +61,35 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
             addAndMakeVisible(toggle);
             toggleAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, id, toggle);
             break;
+        case Style::Icons:
+        {
+            addAndMakeVisible(caption);
+            caption.setJustificationType(juce::Justification::centredLeft);
+            auto names = p->getAllValueStrings();
+            for (int i = 0; i < names.size(); ++i)
+            {
+                icons.push_back(std::make_unique<IconButton>(iconSet, i));
+                icons.back()->onClick = [this, i] { iconAtt->setValueAsCompleteGesture((float)i); };
+                addAndMakeVisible(*icons.back());
+            }
+            iconAtt = std::make_unique<juce::ParameterAttachment>(
+                *p,
+                [this, names](float v) {
+                    int sel = juce::roundToInt(v);
+                    for (int i = 0; i < (int)icons.size(); ++i)
+                        icons[(size_t)i]->setToggleState(i == sel, juce::dontSendNotification);
+                    caption.setText(label.isEmpty() ? names[sel] : label + " " + names[sel],
+                                    juce::dontSendNotification);
+                },
+                nullptr);
+            iconAtt->sendInitialUpdate();
+            // wide enough for the icons and the longest caption
+            int textW = 0;
+            for (auto& n : names)
+                textW = juce::jmax(textW, retro::textWidth(label.isEmpty() ? n : label + " " + n));
+            preferredWidth = juce::jmax(textW, (int)icons.size() * kIcon) + 4;
+            break;
+        }
     }
 }
 
@@ -63,6 +110,14 @@ void ParamControl::resized()
         case Style::Toggle:
             toggle.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 24));
             break;
+        case Style::Icons:
+        {
+            r = r.withSizeKeepingCentre(r.getWidth(), 18 + kIcon);
+            caption.setBounds(r.removeFromTop(18));
+            for (auto& b : icons)
+                b->setBounds(r.removeFromLeft(kIcon));
+            break;
+        }
     }
 }
 
@@ -71,64 +126,246 @@ void Section::paint(juce::Graphics& g) { groupBox(g, getLocalBounds(), title, ac
 void Section::resized()
 {
     // A grid as wide as the widest row (at least four columns). Rows of
-    // choices and toggles are short; rows with knobs share the rest (up to a
-    // knob's worth each) and the spare height spreads out between rows.
+    // choices, toggles and icons are short; rows with knobs (and custom
+    // rows) share the rest, and the spare height spreads out between rows.
     auto r = getLocalBounds().reduced(12, 8);
     r.removeFromTop(16);
     if (rows.empty())
         return;
     size_t cols = 4;
     for (auto& row : rows)
-        cols = std::max(cols, row.size());
+        cols = std::max(cols, row.controls.size());
     int cellW = r.getWidth() / (int)cols;
-    auto hasKnob = [](auto& row) {
-        return std::any_of(row.begin(), row.end(), [](auto* c) { return c->style == ParamControl::Style::Knob; });
+    auto hasKnob = [](const Row& row) {
+        return std::any_of(row.controls.begin(), row.controls.end(),
+                           [](auto* c) { return c->style == ParamControl::Style::Knob; });
     };
     const int shortH = 52;
     int knobRows = 0, fixed = 0;
     for (auto& row : rows)
-        if (hasKnob(row))
+        if (row.custom != nullptr)
+            fixed += row.minHeight;
+        else if (hasKnob(row))
             ++knobRows;
         else
             fixed += shortH;
     int knobH = knobRows ? juce::jmin(118, (r.getHeight() - fixed) / knobRows) : 0;
-    int gap = (r.getHeight() - fixed - knobH * knobRows) / (int)(rows.size() + 1);
+    int spare = r.getHeight() - fixed - knobH * knobRows;
+    // custom rows take the spare height first, then gaps share what is left
+    int customs = (int)std::count_if(rows.begin(), rows.end(), [](auto& row) { return row.custom != nullptr; });
+    int extra = customs ? spare * 3 / 4 / customs : 0;
+    int gap = (spare - extra * customs) / (int)(rows.size() + 1);
     for (auto& row : rows)
     {
         r.removeFromTop(gap);
+        if (row.custom != nullptr)
+        {
+            row.custom->setBounds(r.removeFromTop(row.minHeight + extra).reduced(3, 0));
+            continue;
+        }
         auto line = r.removeFromTop(hasKnob(row) ? knobH : shortH);
-        // rows without knobs share the full width (their text needs it)
-        int w = hasKnob(row) ? cellW : line.getWidth() / (int)row.size();
-        int used = w * (int)row.size();
-        line.removeFromLeft((line.getWidth() - used) / 2);
-        for (auto* c : row)
-            c->setBounds(line.removeFromLeft(w).reduced(3, 0));
+        auto& cs = row.controls;
+        if (hasKnob(row))
+        {
+            line.removeFromLeft((line.getWidth() - cellW * (int)cs.size()) / 2);
+            for (auto* c : cs)
+                c->setBounds(line.removeFromLeft(cellW).reduced(3, 0));
+            continue;
+        }
+        // without knobs: fixed widths as asked, the rest shared; with no
+        // flexible control the leftover becomes even gaps
+        int fixedW = 0, flex = 0;
+        for (auto* c : cs)
+            c->preferredWidth > 0 ? (void)(fixedW += c->preferredWidth) : (void)++flex;
+        int left = line.getWidth() - fixedW;
+        int flexW = flex ? left / flex : 0, between = flex ? 0 : left / (int)(cs.size() + 1);
+        for (auto* c : cs)
+        {
+            line.removeFromLeft(between);
+            c->setBounds(line.removeFromLeft(c->preferredWidth > 0 ? c->preferredWidth : flexW));
+        }
     }
 }
 
 ParamControl* TrackPage::make(juce::AudioProcessorValueTreeState& st, int track, const char* id,
-                              const juce::String& label, ParamControl::Style s)
+                              const juce::String& label, ParamControl::Style s, IconSet icons)
 {
-    controls.push_back(std::make_unique<ParamControl>(st, paramId(track, id), label, s));
+    controls.push_back(std::make_unique<ParamControl>(st, paramId(track, id), label, s, icons));
     return controls.back().get();   // the section it is put in owns its place
 }
 
-TrackPage::TrackPage(juce::AudioProcessorValueTreeState& st, int t)
+LfoScope::LfoScope(CyclesEmuProcessor& p, int t) : proc(p), track(t)
+{
+    const char* ids[] = {"lfowave", "lforeset", "lfosync", "lfomult", "lfodest",
+                         "lfospeed", "lfodepth", "lfofade", "lfophase"};
+    for (int i = 0; i < 9; ++i)
+        raw[i] = p.state().getRawParameterValue(paramId(t, ids[i]));
+    setInterceptsMouseClicks(false, false);
+    startTimerHz(30);
+}
+
+LfoScope::State LfoScope::read() const
+{
+    State s;
+    int* f[] = {&s.wave, &s.trig, &s.sync, &s.mult, &s.dest, &s.speed, &s.depth, &s.fade, &s.phase};
+    for (int i = 0; i < 9; ++i)
+        *f[i] = juce::roundToInt(raw[i]->load());
+    s.bpm = proc.currentBpm();
+    return s;
+}
+
+// Measured (NOTES.md step 11): speed x multiplier / 128 cycles a bar, at
+// the tempo when synced and at 120 BPM when free.
+double LfoScope::cyclesPerSecond(const State& s) const
+{
+    double perBar = std::abs(s.speed - 64) * std::ldexp(1.0, s.mult) / 128.0;
+    return perBar / (240.0 / (s.sync == 0 ? juce::jmax(1.0, s.bpm) : 120.0));
+}
+
+// The window shows two cycles from the note. Fade's time scale is not
+// measured: drawn as |fade| / 64 of the window.
+float LfoScope::valueAt(const State& s, double t) const
+{
+    double run = t;
+    if (s.trig == 2)
+        run = 0.0;                     // Hold: frozen at the note
+    else if (s.trig == 3)
+        run = juce::jmin(t, 1.0);      // One
+    else if (s.trig == 4)
+        run = juce::jmin(t, 0.5);      // Half
+    double dir = s.speed >= 64 ? 1.0 : -1.0;
+    float v = lfoWave(s.wave, s.phase / 128.0 + dir * run) * (float)(s.depth - 64) / 64.0f;
+    if (int f = s.fade - 64; f != 0)
+    {
+        double len = std::abs(f) / 64.0 * 2.0;
+        v *= (float)(f > 0 ? juce::jmax(0.0, 1.0 - t / len) : juce::jmin(1.0, t / len));
+    }
+    return juce::jlimit(-1.0f, 1.0f, v);
+}
+
+juce::Rectangle<int> LfoScope::plotArea() const { return getLocalBounds().reduced(10, 6).withTrimmedTop(20); }
+
+void LfoScope::timerCallback()
+{
+    if (!isShowing())
+        return;
+    auto s = read();
+    int x = -1;
+    double cps = cyclesPerSecond(s);
+    if (cps > 0.0 && cps < 12.0 && s.depth != 64)   // faster than that, a dot only flickers
+    {
+        // Free ignores notes: its position counts from the engine's start
+        double cyc = (s.trig == 0 ? proc.secondsRunning() : proc.secondsSinceTrig(track)) * cps;
+        if (s.trig == 3)
+            cyc = juce::jmin(cyc, 1.0);
+        else if (s.trig == 4)
+            cyc = juce::jmin(cyc, 0.5);
+        else if (s.trig == 2)
+            cyc = 0.0;
+        x = (int)(std::fmod(cyc, 2.0) / 2.0 * plotArea().getWidth()) & ~1;
+    }
+    if (s != shown || x != dotX)
+    {
+        shown = s;
+        dotX = x;
+        repaint();
+    }
+}
+
+void LfoScope::paint(juce::Graphics& g)
+{
+    const auto s = read();
+    auto r = getLocalBounds();
+    g.setColour(kLcd);
+    g.fillRect(r);
+    sunken(g, r);
+    const auto dim = kLcd.interpolatedWith(kLcdText, 0.3f), faint = kLcd.interpolatedWith(kLcdText, 0.16f);
+
+    // header: waveform and rate, destination
+    auto head = r.reduced(10, 6).removeFromTop(14);
+    juce::String rate;
+    double cps = cyclesPerSecond(s);
+    auto num = [](double v) {
+        auto t = juce::String(v, v < 10 ? 2 : 1);
+        return t.contains(".") ? t.trimCharactersAtEnd("0").trimCharactersAtEnd(".") : t;
+    };
+    if (cps <= 0.0)
+        rate = "stopped";
+    else if (s.sync == 0)
+    {
+        double beats = s.bpm / 60.0 / cps;
+        rate = beats >= 4 ? num(beats / 4) + " bar" : beats >= 0.25 ? num(beats) + " beat" : num(cps) + " Hz";
+    }
+    else
+        rate = num(cps) + " Hz";
+    static const char* shortWave[] = {"Tri", "Sin", "Sqr", "Saw", "Env", "Rmp", "Rnd"};
+    drawText(g, juce::String(shortWave[s.wave]) + " " + rate, head, juce::Justification::centredLeft, kLcdText);
+    drawText(g, "> " + kLfoDestNames[s.dest], head, juce::Justification::centredRight,
+             s.dest == 0 ? dim : kLcdText);
+
+    auto p = plotArea();
+    int cy = p.getCentreY(), half = p.getHeight() / 2 - 1, w = p.getWidth();
+    // dashed zero line and the cycle boundary
+    for (int x = p.getX(); x < p.getRight(); x += 6)
+        g.setColour(faint), g.fillRect(x, cy, 3, 1);
+    for (int y = p.getY(); y < p.getBottom(); y += 6)
+        g.fillRect(p.getX() + w / 2, y, 1, 3);
+    // the note: a bar at the left
+    g.setColour(dim);
+    g.fillRect(p.getX(), p.getY(), 2, p.getHeight());
+
+    auto curve = [&](auto value, juce::Colour c) {
+        g.setColour(c);
+        int prev = -1;
+        for (int x = 0; x < w; x += 2)
+        {
+            int y = cy - juce::roundToInt(value(x * 2.0 / w) * half);
+            y = juce::jlimit(p.getY(), p.getBottom() - 2, y) & ~1;
+            if (prev >= 0)
+                g.fillRect(p.getX() + x, juce::jmin(prev, y), 2, std::abs(prev - y) + 2);
+            else
+                g.fillRect(p.getX() + x, y, 2, 2);
+            prev = y;
+        }
+    };
+    // the plain waveform behind, then the LFO as it plays
+    double dir = s.speed >= 64 ? 1.0 : -1.0;
+    curve([&](double t) { return lfoWave(s.wave, s.phase / 128.0 + dir * t); }, faint);
+    curve([&](double t) { return valueAt(s, t); }, kLcdText);
+
+    if (dotX >= 0)
+    {
+        int y = cy - juce::roundToInt(valueAt(s, dotX * 2.0 / w) * half);
+        auto d = juce::Rectangle<int>(p.getX() + dotX - 3, y - 3, 6, 6);
+        g.setColour(kLight);
+        g.fillRect(d);
+        g.setColour(kDark);
+        g.drawRect(d.expanded(1), 1);
+    }
+}
+
+TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t)
 {
     using S = ParamControl::Style;
+    auto& st = proc.state();
     addAndMakeVisible(sound);
     addAndMakeVisible(lfo);
-    sound.addRow({make(st, t, "machine", "Machine", S::Choice), make(st, t, "punch", "Punch", S::Toggle),
-                  make(st, t, "gate", "Gate", S::Toggle), make(st, t, "mute", "Mute", S::Toggle)});
+    sound.addRow({make(st, t, "machine", "Machine", S::Icons, IconSet::Machine),
+                  make(st, t, "punch", "Punch", S::Toggle), make(st, t, "gate", "Gate", S::Toggle),
+                  make(st, t, "mute", "Mute", S::Toggle)});
     sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob),
                   make(st, t, "color", "Color", S::Knob), make(st, t, "shape", "Shape", S::Knob),
                   make(st, t, "sweep", "Sweep", S::Knob), make(st, t, "contour", "Contour", S::Knob)});
     sound.addRow({make(st, t, "voldist", "Vol+Dst", S::Knob), make(st, t, "pan", "Pan", S::Knob),
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});
-    lfo.addRow({make(st, t, "lfowave", "Waveform", S::Choice), make(st, t, "lforeset", "Trig Mode", S::Choice)});
-    lfo.addRow({make(st, t, "lfosync", "Sync", S::Choice), make(st, t, "lfomult", "Multiplier", S::Choice)});
-    lfo.addRow({make(st, t, "lfodest", "Destination", S::Choice)});
+    lfo.addRow({make(st, t, "lfowave", "Wave", S::Icons, IconSet::Wave),
+                make(st, t, "lforeset", "Trig", S::Icons, IconSet::Trig)});
+    auto* dest = make(st, t, "lfodest", "Destination", S::Choice);
+    auto* mult = make(st, t, "lfomult", "Mult", S::Choice);
+    mult->preferredWidth = 84;
+    lfo.addRow({make(st, t, "lfosync", "", S::Icons, IconSet::Clock), mult, dest});
+    lfo.addCustomRow(&scope, 84);
     lfo.addRow({make(st, t, "lfospeed", "Speed", S::Knob), make(st, t, "lfodepth", "Depth", S::Knob),
                 make(st, t, "lfofade", "Fade", S::Knob), make(st, t, "lfophase", "Phase", S::Knob)});
 }
@@ -209,7 +446,7 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         setAccent(*b, kAccents[i]);
         b->onClick = [this, i] { showPage(i); };
         if (i < kTracks)
-            pages.add(new TrackPage(st, i));
+            pages.add(new TrackPage(p, i));
         else
             pages.add(new FxPage(st));
         setAccent(*pages.getLast(), kAccents[i]);
