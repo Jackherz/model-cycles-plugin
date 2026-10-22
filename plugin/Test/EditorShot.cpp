@@ -148,6 +148,42 @@ int main(int argc, char** argv)
         juce::PNGImageFormat().writeImageToStream(img, os);
     }
 
+    // typing a value: click track 1's Decay readout, type 100, Return
+    {
+        e->showPage(0);
+        std::function<retro::PixelEntry*(juce::Component&, bool)> find =
+            [&](juce::Component& c, bool inDecay) -> retro::PixelEntry* {
+            inDecay = inDecay || c.getProperties()["helpId"].toString() == "t1_decay";
+            if (auto* pe = dynamic_cast<retro::PixelEntry*>(&c); pe != nullptr && inDecay)
+                return pe;
+            for (auto* ch : c.getChildren())
+                if (auto* f = find(*ch, inDecay))
+                    return f;
+            return nullptr;
+        };
+        retro::PixelEntry* entry = nullptr;
+        for (auto* ch : e->getChildren())
+            if (entry == nullptr)
+                entry = find(*ch, false);
+        if (entry != nullptr)
+        {
+            entry->begin();
+            for (auto ch : juce::String("100"))
+                entry->keyPressed(juce::KeyPress(ch, 0, ch));
+            auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+            auto f = out.getChildFile("editor-typing.png");
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::PNGImageFormat().writeImageToStream(img, os);
+            entry->keyPressed(juce::KeyPress(juce::KeyPress::returnKey));
+            auto* p = proc.state().getParameter("t1_decay");
+            std::printf("typed 100 into Decay: the parameter is now %d\n",
+                        juce::roundToInt(p->convertFrom0to1(p->getValue())));
+        }
+        else
+            std::printf("no Decay readout found\n");
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

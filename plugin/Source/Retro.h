@@ -59,6 +59,32 @@ void signalBars(juce::Graphics&, juce::Rectangle<int>, int bars, float level, ju
 // blocks of `cell` pixels (the PS1's look).
 void ditherGradient(juce::Graphics&, juce::Rectangle<int>, juce::Colour a, juce::Colour b, int cell = kPx);
 
+// A value readout you can type into as on the old computer itself: click
+// it and it becomes a lit Codec prompt with the pixel font and a blinking
+// block cursor. Return enters the value (through the slider's own text
+// parsing), Escape cancels, clicking away enters. No system text box.
+class PixelEntry : public juce::Label, private juce::Timer
+{
+public:
+    PixelEntry();
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override {}
+    void mouseDoubleClick(const juce::MouseEvent&) override {}
+    bool keyPressed(const juce::KeyPress&) override;
+    void focusGained(FocusChangeType) override {}
+    void focusLost(FocusChangeType) override;
+    bool entering() const { return active; }
+    void begin();   // what a click does
+
+private:
+    void timerCallback() override;
+    void finish(bool commit);
+
+    bool active = false, cursorOn = true;
+    juce::String typed;
+};
+
 class Look : public juce::LookAndFeel_V4
 {
 public:

@@ -420,11 +420,96 @@ void Look::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float
     }
 }
 
-juce::Label* Look::createSliderTextBox(juce::Slider& s)
+juce::Label* Look::createSliderTextBox(juce::Slider&)
 {
-    auto* l = LookAndFeel_V4::createSliderTextBox(s);
+    auto* l = new PixelEntry();
+    l->setJustificationType(juce::Justification::centred);
     l->setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     return l;
+}
+
+PixelEntry::PixelEntry() { setMouseCursor(juce::MouseCursor::IBeamCursor); }
+
+void PixelEntry::begin()
+{
+    if (active || !isEditable())
+        return;
+    active = true;
+    typed.clear();
+    cursorOn = true;
+    setWantsKeyboardFocus(true);
+    grabKeyboardFocus();
+    startTimer(400);
+    repaint();
+}
+
+void PixelEntry::finish(bool commit)
+{
+    if (!active)
+        return;
+    active = false;
+    stopTimer();
+    setWantsKeyboardFocus(false);
+    // the slider parses it and redraws the readout in its own format
+    if (commit && typed.isNotEmpty())
+        setText(typed, juce::sendNotificationSync);
+    repaint();
+}
+
+void PixelEntry::mouseDown(const juce::MouseEvent&) { active ? void() : begin(); }
+
+void PixelEntry::focusLost(FocusChangeType) { finish(true); }
+
+void PixelEntry::timerCallback()
+{
+    cursorOn = !cursorOn;
+    repaint();
+}
+
+bool PixelEntry::keyPressed(const juce::KeyPress& k)
+{
+    if (!active)
+        return false;
+    if (k == juce::KeyPress::returnKey)
+        finish(true);
+    else if (k == juce::KeyPress::escapeKey)
+        finish(false);
+    else if (k == juce::KeyPress::backspaceKey)
+        typed = typed.dropLastCharacters(1);
+    else
+    {
+        // what the readouts show: numbers, signs, and L/R/C/H/OFF
+        const auto ch = juce::CharacterFunctions::toUpperCase(k.getTextCharacter());
+        const int room = juce::jmax(1, (getWidth() - 10) / (6 * kPx) - 1);
+        if (juce::String("0123456789+-.LRCHOF").containsChar(ch) && typed.length() < room)
+            typed += juce::String::charToString(ch);
+        else
+            return true;   // swallowed: nothing else should see typing
+    }
+    cursorOn = true;
+    repaint();
+    return true;
+}
+
+void PixelEntry::paint(juce::Graphics& g)
+{
+    if (!active)
+        return Label::paint(g);   // the Codec readout (Look::drawLabel)
+    // the prompt: a lit frame, the typed text and a block cursor
+    auto r = getLocalBounds();
+    auto in = codecScreen(g, r, 1);
+    g.setColour(kPhosphor);
+    g.drawRect(in, 1);
+    const int w = textWidth(typed) + (typed.isEmpty() ? 0 : kPx), cw = 5 * kPx;
+    int x = in.getCentreX() - (w + cw) / 2;
+    const int y = in.getCentreY() - textHeight() / 2;
+    drawText(g, typed, x, y, kPhosphor);
+    if (cursorOn)
+    {
+        g.setColour(kPhosphor);
+        g.fillRect(x + w, y, cw, textHeight());
+    }
+    scanlines(g, in);
 }
 
 juce::Slider::SliderLayout Look::getSliderLayout(juce::Slider& s)

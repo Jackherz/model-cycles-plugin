@@ -931,6 +931,20 @@ pass.
   done by us: relocation, the voice bridge and the parameters. Here its
   CPU cost would be small.
 
+## Step 19: typing values in the retro style (2026-10-22)
+
+`retro::PixelEntry`, the sliders' value readouts (`Look::createSliderTextBox`):
+- Clicking one turns it into a lit Codec prompt that echoes the typing in
+  the pixel font, with a blinking block cursor. No system text box.
+- It accepts what the readouts show: 0-9 + - . and L R C H O F.
+- Return enters the value through the slider's own text parsing (so "L16",
+  "+12", "OFF" work), Escape cancels, clicking away enters.
+- Gotcha: sliders build their readout when constructed, before they meet
+  the editor's look. The editor's constructor ends with
+  `sendLookAndFeelChange()`, so they rebuild it as a PixelEntry.
+- Checked in EditorShot: typing 100 into track 1's Decay sets it to 100
+  (`notes/editor-typing.png` is mid-entry).
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

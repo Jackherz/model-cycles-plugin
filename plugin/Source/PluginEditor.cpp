@@ -871,6 +871,9 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     addChildComponent(bubble);
     // hover anywhere in the editor reaches mouseMove, for the help mode
     addMouseListener(this, true);
+    // Sliders built their value readouts before they met our look: have
+    // them rebuild them now, as Look::createSliderTextBox's PixelEntry.
+    sendLookAndFeelChange();
     setSize(kW, kH);
     showPage(0);
     startTimerHz(8);
