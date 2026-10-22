@@ -1001,6 +1001,18 @@ other colour offset to suit it (`retro::applyTheme`, `kThemes` in
 
 ## Next steps
 
+**First, next session (Jack, 2026-10-22): knob values must stand out in
+every colour scheme.** The knobs' lit tick rings use the track's accent.
+Track 2's yellow (`kAccents[1]`, #f6b800) nearly vanishes on Grey's
+#c0c0c0 face, and others will blend on some schemes too.
+- Make the lit ticks contrast with the face in every scheme: give each lit
+  tick a dark (or, on Midnight, light) outline or shadow pixel, darken or
+  lighten the accent per scheme until it passes a contrast check against
+  `kFace`, and dim the unlit ticks further.
+- Check the pointer's contrast on the knob body too.
+- Verify with `CyclesEmuEditorShot` on all five schemes and all six track
+  colours.
+
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
    a. (done, step 9) the idle hum: the reverb at size 127 froze the
       captured tail; effects now start silent;
