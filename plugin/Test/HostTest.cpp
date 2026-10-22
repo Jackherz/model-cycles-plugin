@@ -7,6 +7,7 @@
 //     callbacks at 48 and 44.1 kHz; time each processBlock, write a WAV.
 //
 //   CyclesEmuHostTest [path/to/CyclesEmu.vst3] [out_dir]
+#include "../Source/Resampler.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <algorithm>
@@ -266,6 +267,69 @@ int tempo(juce::AudioPluginFormatManager& fm, const juce::String& path)
 }
 } // namespace
 
+// The resampled path: one chord at sample 0 (so the engine renders the same
+// stream at any host rate), at 48 kHz and at 44.1 kHz. The 44.1 kHz output
+// must match the 48 kHz one put through the same kernel (Kaiser, Resampler's
+// taps, beta and cutoff) evaluated continuously in double precision at the
+// exact times the resampler uses: this checks the plugin's streaming
+// (buffering, positions, event timing) and the table's precision.
+int resampled(juce::AudioPluginFormatManager& fm, const juce::String& path)
+{
+    auto render = [&](double rate, int frames) {
+        auto p = load(fm, path, rate, 128);
+        juce::AudioBuffer<float> out(2, frames);
+        if (!p) return out;
+        setParam(*p, "MIDI Mode", 1.0f);
+        p->prepareToPlay(rate, 128);
+        juce::AudioBuffer<float> buf(2, 128);
+        for (int pos = 0; pos + 128 <= frames; pos += 128)
+        {
+            juce::MidiBuffer midi;
+            if (pos == 0)
+                for (int t = 0; t < 6; ++t)
+                    midi.addEvent(juce::MidiMessage::noteOn(t + 1, 40 + 5 * t, (juce::uint8)100), 0);
+            buf.clear();
+            p->processBlock(buf, midi);
+            for (int c = 0; c < 2; ++c)
+                out.copyFrom(c, pos, buf, c, 0, 128);
+        }
+        return out;
+    };
+    auto a = render(48000, 48000 * 3), b = render(44100, 44100 * 3);
+    const double step = 48000.0 / 44100.0, D = Resampler::latency();
+    const double fc = 0.5 * 44100.0 / 48000.0 - 0.0225;   // as Resampler::prepare
+    const int T = Resampler::kTaps;
+    auto i0 = [](double x) {
+        double sum = 1, term = 1;
+        for (int k = 1; k < 40; ++k)
+            term *= (x / (2.0 * k)) * (x / (2.0 * k)), sum += term;
+        return sum;
+    };
+    const double beta = 12.5, i0b = i0(beta);
+    double e = 0, s = 0;
+    for (int k = 4000; k < 44100 * 3 - 4000; ++k)
+    {
+        const double t = k * step + D, start = std::floor(k * step);
+        double ref = 0, norm = 0;
+        for (int j = 0; j < T; ++j)
+        {
+            const double x = start + j - t, r = x / (T / 2);
+            const double win = std::abs(r) < 1 ? i0(beta * std::sqrt(1 - r * r)) / i0b : 0;
+            const double h = (x == 0 ? 2 * fc : std::sin(2 * M_PI * fc * x) / (M_PI * x)) * win;
+            ref += a.getSample(0, (int)start + j) * h;
+            norm += h;
+        }
+        ref /= norm;
+        const double d = b.getSample(0, k) - ref;
+        e += d * d;
+        s += ref * ref;
+    }
+    const double db = 10 * std::log10(e / s);
+    std::printf("resampled path at 44.1 kHz against an independent reference: residual %.1f dB -> %s\n", db,
+                db < -100 ? "PASS" : "FAIL");
+    return db < -100 ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -281,6 +345,7 @@ int main(int argc, char** argv)
     rc |= identity(fm, path, state, true);
     rc |= idle(fm, path);
     rc |= tempo(fm, path);
+    rc |= resampled(fm, path);
     rc |= load_test(fm, path, 48000, outDir.getChildFile("hosttest-48k.wav"));
     rc |= load_test(fm, path, 44100, outDir.getChildFile("hosttest-44k1.wav"));
     return rc;

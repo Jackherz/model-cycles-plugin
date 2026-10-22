@@ -5,6 +5,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "engine.h"
 #include "DcBlock.h"
+#include "Resampler.h"
 
 namespace cyclesemu
 {
@@ -91,6 +92,7 @@ private:
         const cyclesemu::ParamDef* def;
         int track;   // 0-5, 6 for FX
         juce::RangedAudioParameter* param = nullptr;
+        std::atomic<float>* raw = nullptr;   // its plain value, read every block
         int lastParam = -1;
     };
 
@@ -112,7 +114,7 @@ private:
     juce::MidiBuffer carry;           // events waiting for the next block boundary
     double ratio = 1.0;
     bool resample = false;
-    juce::WindowedSincInterpolator resamplers[2];
+    Resampler resampler;
     std::vector<float> srcL, srcR;
     int engineFaults = 0;
     DcBlock dcL, dcR;

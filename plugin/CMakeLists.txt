@@ -30,6 +30,14 @@ endif()
 add_library(mcengine STATIC ${AOT}/build/render.c ${AOT}/runtime.c ${AOT}/engine.c)
 target_include_directories(mcengine PUBLIC ${AOT})
 target_compile_options(mcengine PRIVATE -O2 -Wno-parentheses-equality)
+# profile-guided when ../aot/pgo.sh has made the profile (about -35% per block)
+if(EXISTS ${AOT}/build/render.profdata)
+    target_compile_options(mcengine PRIVATE -fprofile-instr-use=${AOT}/build/render.profdata
+        -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date)
+    set_property(SOURCE ${AOT}/build/render.c APPEND PROPERTY OBJECT_DEPENDS ${AOT}/build/render.profdata)
+else()
+    message(WARNING "No ${AOT}/build/render.profdata: run ../aot/pgo.sh for a faster engine")
+endif()
 set_target_properties(mcengine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 juce_add_plugin(CyclesEmu
@@ -69,3 +77,9 @@ target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProc
 target_compile_definitions(CyclesEmuEditorShot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine juce::juce_audio_utils
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+# The resampler against JUCE's WindowedSincInterpolator: quality and time.
+juce_add_console_app(CyclesEmuResamplerTest PRODUCT_NAME "CyclesEmuResamplerTest")
+target_sources(CyclesEmuResamplerTest PRIVATE Test/ResamplerTest.cpp)
+target_compile_definitions(CyclesEmuResamplerTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(CyclesEmuResamplerTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)

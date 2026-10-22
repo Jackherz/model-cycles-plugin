@@ -4,11 +4,17 @@
  * decay 127, both sends 127, retriggered every quarter second.
  *
  *   bench STATE_DIR [seconds] [out.wav]
+ *
+ * BENCH_MODE=mix instead rotates every machine through every track (a new
+ * one every 2 s) with the macros, LFO and sends moving: the training run
+ * for profile-guided builds (aot/pgo.sh), so no machine's code is cold.
+ * BENCH_MODE=kit plays the loaded kit unchanged.
  */
 #include <mach/mach_time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include "engine.h"
 
 static int cmp(const void *a, const void *b)
@@ -46,7 +52,9 @@ int main(int argc, char **argv)
     int st;
     mc_engine *g = mc_engine_new(argv[1], &st);
     if (!g) { fprintf(stderr, "load failed %d\n", st); return 1; }
-    for (int t = 0; t < 6; t++) {
+    const char *mode = getenv("BENCH_MODE");
+    int mix = mode && !strcmp(mode, "mix"), kit = mode && !strcmp(mode, "kit");
+    for (int t = 0; t < 6 && !kit; t++) {
         mc_engine_param(g, t, 0x26, 5);       /* machine: Chord */
         mc_engine_param(g, t, 0x38, 127);     /* decay */
         mc_engine_param(g, t, 0x3c, 127);     /* delay send */
@@ -59,6 +67,21 @@ int main(int argc, char **argv)
     mach_timebase_info(&tb);
     int bad = 0;
     for (long b = 0; b < nblocks; b++) {
+        if (mix && b % 3000 == 0)          /* every 2 s: next machine, new macros and LFO */
+            for (int t = 0; t < 6; t++) {
+                int k = (int)(b / 3000);
+                mc_engine_param(g, t, 0x26, (t + k) % 6);
+                mc_engine_param(g, t, 0x38, 40 + (k * 37 + t * 11) % 88);
+                for (int m = 0; m < 4; m++)   /* color, shape, sweep, contour */
+                    mc_engine_param(g, t, 0x2a + 2 * m, (k * 29 + t * 17 + m * 41) % 128);
+                mc_engine_param(g, t, 0x1e, (k + t) % 7);                  /* LFO waveform */
+                mc_engine_param(g, t, 0x1c, (k + t) % 2 ? 10 + (k + t) % 13 : 0);   /* destination */
+                mc_engine_param(g, t, 0x16, 64 + 8 + (k * 5) % 50);         /* speed */
+                mc_engine_param(g, t, 0x24, 64 + 20);                       /* depth */
+                mc_engine_param(g, t, 0x18, (k + t) % 24);                  /* multiplier */
+                mc_engine_param(g, t, 0x3c, (k * 13 + t * 31) % 128);
+                mc_engine_param(g, t, 0x3e, (k * 7 + t * 19) % 128);
+            }
         if (b % 375 == 0)                  /* every 0.25 s */
             for (int t = 0; t < 6; t++)
                 mc_engine_note(g, t, 48 + 2 * t, 120, 1, 0x0681);

@@ -660,6 +660,76 @@ What changed here, kept to the Win95/PS1 look:
     (`LfoShape.h`) follow other Elektron machines.
 - `notes/editor-lfo-demo.png` sets every LFO setting and renders the result.
 
+## Step 15: optimisation (2026-10-22), -36% engine, -38% / -48% plugin CPU
+
+Before -> after (M1 Pro). Engine: mean per 32-frame block, `aot/build/bench`.
+Plugin: CyclesEmuHostTest, 128-sample callbacks.
+
+| | before | after |
+|---|---|---|
+| engine, worst case (6 Chords, decay and sends 127) | 71.0 us | 45.8 us |
+| engine, every machine in turn (`BENCH_MODE=mix`) | 70.9 us | 46.0 us |
+| engine, the kit as loaded (`BENCH_MODE=kit`) | 64.5 us | 42.3 us |
+| plugin at 48 kHz | 273 us (10.2 %) | 168 us (6.3 %) |
+| plugin at 44.1 kHz | 368 us (12.7 %) | 191 us (6.6 %) |
+
+Where the time was:
+- A counting build (render.c with `-DMC_TRACE` and a per-PC counter)
+  shows 82k instructions per worst-case block.
+- 40 % are EMAC: mac 24 %, from_mac 12 %, to_mac 3 %.
+- 39.5 % of all instructions are one 41-instruction loop at `0x400a8942`:
+  the per-voice oscillator, 32 samples x 24 calls a block
+  (6 tracks x 4 Chord voices).
+
+What changed:
+1. **Lazy MACSR flags** (`translate.py`, `runtime.h` `mc_mac_nf` /
+   `mc_mac_flags`). MACSR lives in three locals:
+   - control bits (change only on `move to MACSR`);
+   - the sticky PAV bits;
+   - the N/Z/V/EV flags, computed only when MACSR is read
+     (`from_macsr`, `macsr_to_ccr`, exit).
+   A MAC op records its result (`MAC_LAZY`); clang deletes those stores
+   when nothing reads them. The mode check now depends only on the control
+   bits, so it is loop-invariant. Alone: -19 %.
+2. **Profile-guided build**, about -20 % on top:
+   - `aot/pgo.sh` trains an instrumented bench on the worst case, every
+     machine (`BENCH_MODE=mix`: machines, macros, LFO and sends rotating)
+     and the kit, and writes `aot/build/render.profdata`.
+   - The plugin's CMake uses that file when it exists.
+   - Rerun pgo.sh after translate.py. A stale profile is ignored with a
+     warning: slower, not wrong.
+   - Tried and dropped: `-O3` (-4 %, about noise), `-mcpu=apple-m1` (0).
+3. **Parameter polling**: each block reads the parameters' raw atomics
+   instead of `getValue` + `convertFrom0to1` (148 virtual calls).
+4. **Resampler** (`Source/Resampler.h`), replacing JUCE's
+   WindowedSincInterpolator:
+   - Polyphase windowed sinc: 192 taps, Kaiser beta 12.5, 1024 phases with
+     linear interpolation between them, vector dot products, both channels
+     sharing one table.
+   - Cutoff from the lower rate. JUCE's did not low-pass when going down to
+     44.1 kHz, so 22.05-24 kHz content aliased at full level.
+   - `CyclesEmuResamplerTest`, ours against JUCE's:
+
+     | | JUCE | ours |
+     |---|---|---|
+     | error, 48 -> 44.1 kHz | -109 to -92 dB | -144 to -131 dB |
+     | error, 48 -> 96 kHz | -133 to -112 dB | -144 to -137 dB |
+     | alias of a 23.5 kHz tone | -6 dBFS | -139 dBFS |
+     | time per 128 outputs | 35 us | 3-5 us |
+
+   - JUCE's also lost 0.09 dB of level.
+   - Trade-off: the passband is flat to about 19.5 kHz, with the
+     transition band below 22.05 kHz.
+
+Checks, all passing:
+- `check_replay.py`: base 300/300, chord 100/100, kick 300/300.
+- `check_driven.py --keep-going`: 197/200. The same three note-on RTOS-page
+  differences as in step 5.
+- HostTest: identity, idle and tempo as before, plus a new test, the
+  **resampled path**: a 44.1 kHz render against a continuous
+  double-precision evaluation of the same kernel, residual -142.7 dB.
+- auval passes.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

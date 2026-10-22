@@ -225,6 +225,77 @@ MC_INLINE uint64_t mc_mac(uint32_t *macsr, int acc, uint64_t accv, uint32_t rx, 
     return accv;
 }
 
+/* MACSR as the generated code keeps it: the control bits (changed only by
+ * a write to MACSR), the sticky PAV bits, and the N/Z/V/EV flags, computed
+ * only when MACSR is read (mc_mac_flags). */
+#define MACSR_FLAGS 0x00fu
+#define MACSR_PAV   0xf00u
+#define MACSR_CTL   (~(MACSR_FLAGS | MACSR_PAV))
+
+/* mc_mac without the flags. The V/PAV logic is mc_mac's: V of this op
+ * lives in `v`, PAV in *pav. */
+MC_INLINE uint64_t mc_mac_nf(uint32_t ctl, uint32_t *pav, int acc, uint64_t accv, uint32_t rx, uint32_t ry,
+                             int mode, int msac, int scale)
+{
+    uint64_t product;
+    int v = 0;
+    if (mode == 0) {
+        product = mc_macmulf(ctl, rx, ry);
+    } else if (mode == 1) {
+        int64_t p = (int64_t)(int32_t)rx * (int32_t)ry;
+        int64_t res = (int64_t)((uint64_t)p << 24) >> 24;
+        if (MC_UNLIKELY(res != p)) {
+            v = 1;
+            if (ctl & MACSR_OMC) res = p < 0 ? ~(1ll << 50) : (1ll << 50);
+        }
+        product = (uint64_t)res;
+    } else {
+        product = (uint64_t)rx * ry;
+        if (MC_UNLIKELY(product & (0xffffffull << 40))) {
+            v = 1;
+            if (ctl & MACSR_OMC) product = 1ll << 50;
+            else product &= ((1ull << 40) - 1);
+        }
+    }
+    if (mode != 0) {
+        if (scale == 1)
+            product <<= 1;
+        else if (scale == 3)
+            product = mode == 1 ? (uint64_t)((int64_t)product >> 1) : product >> 1;
+    }
+    accv = msac ? accv - product : accv + product;
+    if (mode == 2) {
+        if (accv & (0xffffull << 48)) v = 1;
+        if (MC_UNLIKELY(v)) {
+            *pav |= MACSR_PAV0 << acc;
+            if (ctl & MACSR_OMC) accv = accv > (1ull << 53) ? 0 : (1ull << 48) - 1;
+            else accv &= ((1ull << 48) - 1);
+        }
+        return accv;
+    }
+    int64_t sum = (int64_t)accv;
+    int64_t result = (int64_t)((uint64_t)sum << 16) >> 16;
+    if (result != sum) v = 1;
+    if (MC_UNLIKELY(v)) {
+        *pav |= MACSR_PAV0 << acc;
+        if (ctl & MACSR_OMC) {
+            if (mode == 0) result = sum < 0 ? (int64_t)0xffffff8000000000ull : (int64_t)0x007fffffff00ll;
+            else result = sum < 0 ? (int64_t)~0x7fffffffll : 0x7fffffffll;
+        }
+    }
+    return (uint64_t)result;
+}
+
+/* The flags a flag-setting MAC op left: `sr` is MACSR just after it (its
+ * mode and PAV bits), `val` and `acc` its result and accumulator. Returns
+ * MACSR's V/Z/N/EV bits. */
+MC_INLINE uint32_t mc_mac_flags(uint32_t sr, int acc, uint64_t val)
+{
+    uint32_t t = sr & ~(MACSR_V | MACSR_Z | MACSR_N | MACSR_EV);
+    mc_mac_set_flags(&t, acc, val);
+    return t & (MACSR_V | MACSR_Z | MACSR_N | MACSR_EV);
+}
+
 MC_INLINE uint32_t mc_get_macf(uint32_t macsr, uint64_t val)
 {
     int64_t acc = (int64_t)val;

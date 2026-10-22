@@ -178,6 +178,7 @@ CyclesEmuProcessor::CyclesEmuProcessor()
     for (auto& s : slots)
     {
         s.param = apvts.getParameter(s.id);
+        s.raw = apvts.getRawParameterValue(s.id);
         int v = engine ? currentEngineValue(s) : s.def->lo;
         s.lastParam = v;
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
@@ -288,7 +289,7 @@ void CyclesEmuProcessor::applyParameterChanges()
 {
     for (auto& s : slots)
     {
-        int v = juce::roundToInt(s.param->convertFrom0to1(s.param->getValue()));
+        int v = juce::roundToInt(s.raw->load(std::memory_order_relaxed));
         if (v != s.lastParam)
         {
             s.lastParam = v;
@@ -354,21 +355,24 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         }
 }
 
-void CyclesEmuProcessor::prepareToPlay(double sampleRate, int)
+void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     resample = std::abs(sampleRate - 48000.0) > 0.5;
     ratio = 48000.0 / sampleRate;
-    for (auto& r : resamplers)
-        r.reset();
+    if (resample)
+        resampler.prepare(48000.0, sampleRate);
     dcL.reset();
     dcR.reset();
     srcL.clear();
     srcR.clear();
-    srcL.reserve(8192);
-    srcR.reserve(8192);
+    // room for the largest call, so the audio thread never reallocates
+    const size_t room = (size_t)std::ceil(juce::jmax(samplesPerBlock, 1024) * 48000.0 / sampleRate)
+                        + Resampler::kTaps + 2 * kBlock;
+    srcL.reserve(room);
+    srcR.reserve(room);
     carry.ensureSize(4096);
     blockPos = kBlock;
-    setLatencySamples(resample ? juce::roundToInt(juce::WindowedSincInterpolator::getBaseLatency() / ratio) : 0);
+    setLatencySamples(resample ? juce::roundToInt(Resampler::latency() / ratio) : 0);
 }
 
 bool CyclesEmuProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -451,18 +455,16 @@ void CyclesEmuProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // engine output is produced to interpolate n host samples.
     for (const auto meta : midi)
         handleMidi(meta.getMessage());
-    const int needed = (int)std::ceil(n * ratio) + 4;
+    const int needed = resampler.needed(n);
     while ((int)srcL.size() < needed)
     {
         renderEngineBlock();
         srcL.insert(srcL.end(), blockL, blockL + kBlock);
         srcR.insert(srcR.end(), blockR, blockR + kBlock);
     }
-    int usedL = resamplers[0].process(ratio, srcL.data(), outL, n);
-    int usedR = resamplers[1].process(ratio, srcR.data(), outR, n);
-    jassert(usedL == usedR);
-    srcL.erase(srcL.begin(), srcL.begin() + usedL);
-    srcR.erase(srcR.begin(), srcR.begin() + usedR);
+    const int used = resampler.process(srcL.data(), srcR.data(), outL, outR, n);
+    srcL.erase(srcL.begin(), srcL.begin() + used);
+    srcR.erase(srcR.begin(), srcR.begin() + used);
 }
 
 juce::AudioProcessorEditor* CyclesEmuProcessor::createEditor() { return new CyclesEmuEditor(*this); }

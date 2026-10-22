@@ -813,7 +813,7 @@ def i_move_from_ccr(ins, insn):
 # EMAC -----------------------------------------------------------------------
 
 def mac_word(ins, val, upper):
-    return ins.tmp('mc_mac_word(macsr, %s, %d)' % (c(val), 1 if upper else 0))
+    return ins.tmp('mc_mac_word(macctl, %s, %d)' % (c(val), 1 if upper else 0))
 
 
 def i_mac(ins, insn):
@@ -835,8 +835,9 @@ def i_mac(ins, insn):
     if (e & 0x800) == 0:
         rx = mac_word(ins, rx, e & 0x80)
         ry = mac_word(ins, ry, e & 0x40)
-    ins.emit('macc[%d] = mc_mac(&macsr, %d, macc[%d], %s, %s, MC_MAC_MODE(macsr), %d, %d);'
-             % (acc, acc, acc, c(rx), c(ry), 1 if e & 0x100 else 0, (e >> 9) & 3))
+    # flags lazily: MAC_LAZY records what mc_mac_flags needs (dead unless read)
+    ins.emit('macc[%d] = mc_mac_nf(macctl, &macpav, %d, macc[%d], %s, %s, MC_MAC_MODE(macctl), %d, %d); MAC_LAZY(%d);'
+             % (acc, acc, acc, c(rx), c(ry), 1 if e & 0x100 else 0, (e >> 9) & 3, acc))
     if load:
         rw = ins.areg((insn >> 9) & 7) if insn & 0x40 else ins.dreg((insn >> 9) & 7)
         ins.emit('%s = %s;' % (rw, c(loadval)))
@@ -850,21 +851,20 @@ def i_mac(ins, insn):
 def i_from_mac(ins, insn):
     rx = ins.areg(insn & 7) if insn & 8 else ins.dreg(insn & 7)
     n = (insn >> 9) & 3
-    ins.emit('%s = mc_from_mac(macsr, macc[%d]);' % (rx, n))
+    ins.emit('%s = mc_from_mac(macctl, macc[%d]);' % (rx, n))
     if insn & 0x40:
-        ins.emit('macc[%d] = 0; macsr &= ~(MACSR_PAV0 << %d);' % (n, n))
+        ins.emit('macc[%d] = 0; macpav &= ~(MACSR_PAV0 << %d);' % (n, n))
 
 
 def i_move_mac(ins, insn):
     src, dst = insn & 3, (insn >> 9) & 3
-    ins.emit('macc[%d] = macc[%d]; if (macsr & (MACSR_PAV0 << %d)) macsr |= MACSR_PAV0 << %d; '
-             'else macsr &= ~(MACSR_PAV0 << %d);' % (dst, src, src, dst, dst))
-    ins.emit('macsr &= ~(MACSR_V | MACSR_Z | MACSR_N | MACSR_EV); mc_mac_set_flags(&macsr, %d, macc[%d]);'
-             % (dst, dst))
+    ins.emit('macc[%d] = macc[%d]; if (macpav & (MACSR_PAV0 << %d)) macpav |= MACSR_PAV0 << %d; '
+             'else macpav &= ~(MACSR_PAV0 << %d);' % (dst, src, src, dst, dst))
+    ins.emit('MAC_LAZY(%d);' % dst)
 
 
 def i_from_macsr(ins, insn):
-    ins.emit('%s = macsr;' % (ins.areg(insn & 7) if insn & 8 else ins.dreg(insn & 7)))
+    ins.emit('MAC_FLAGS(); %s = macctl | macpav | macflg;' % (ins.areg(insn & 7) if insn & 8 else ins.dreg(insn & 7)))
 
 
 def i_from_mask(ins, insn):
@@ -874,24 +874,26 @@ def i_from_mask(ins, insn):
 def i_from_mext(ins, insn):
     reg = ins.areg(insn & 7) if insn & 8 else ins.dreg(insn & 7)
     a = 2 if insn & 0x400 else 0
-    ins.emit('%s = (macsr & MACSR_FI) ? mc_get_mac_extf(macc, %d) : mc_get_mac_exti(macc, %d);'
+    ins.emit('%s = (macctl & MACSR_FI) ? mc_get_mac_extf(macc, %d) : mc_get_mac_exti(macc, %d);'
              % (reg, a, a))
 
 
 def i_macsr_to_ccr(ins, insn):
-    ins.set_sr('(sr & 0xffe0u) | (macsr & 0xf)')
+    ins.emit('MAC_FLAGS();')
+    ins.set_sr('(sr & 0xffe0u) | macflg')
 
 
 def i_to_mac(ins, insn):
     n = (insn >> 9) & 3
     val = ins.src_ea(insn, OS_LONG, 0)
-    ins.emit('macc[%d] = mc_to_mac(macsr, %s); macsr &= ~(MACSR_PAV0 << %d);' % (n, c(val), n))
-    ins.emit('macsr &= ~(MACSR_V | MACSR_Z | MACSR_N | MACSR_EV); mc_mac_set_flags(&macsr, %d, macc[%d]);'
-             % (n, n))
+    ins.emit('macc[%d] = mc_to_mac(macctl, %s); macpav &= ~(MACSR_PAV0 << %d);' % (n, c(val), n))
+    ins.emit('MAC_LAZY(%d);' % n)
 
 
 def i_to_macsr(ins, insn):
-    ins.emit('mc_set_macsr(&macsr, macc, %s);' % c(ins.src_ea(insn, OS_LONG, 0)))
+    ins.emit('{ uint32_t s_ = macctl | macpav | macflg; mc_set_macsr(&s_, macc, %s); '
+             'macctl = s_ & MACSR_CTL; macpav = s_ & MACSR_PAV; macflg = s_ & MACSR_FLAGS; mfl = 0; }'
+             % c(ins.src_ea(insn, OS_LONG, 0)))
 
 
 def i_to_mask(ins, insn):
@@ -901,8 +903,8 @@ def i_to_mask(ins, insn):
 def i_to_mext(ins, insn):
     val = ins.tmp(c(ins.src_ea(insn, OS_LONG, 0)))
     a = 2 if insn & 0x400 else 0
-    ins.emit('if (macsr & MACSR_FI) mc_set_mac_extf(macc, %s, %d); '
-             'else if (MACSR_SIGNED_INT(macsr)) mc_set_mac_exts(macc, %s, %d); '
+    ins.emit('if (macctl & MACSR_FI) mc_set_mac_extf(macc, %s, %d); '
+             'else if (MACSR_SIGNED_INT(macctl)) mc_set_mac_exts(macc, %s, %d); '
              'else mc_set_mac_extu(macc, %s, %d);' % (c(val), a, c(val), a, c(val), a))
 
 
@@ -1051,6 +1053,10 @@ class Translator:
         for n, mask in ((8, '0xff'), (16, '0xffff'), (32, '0xffffffffu')):
             w('#define ST%d(a, v) do { uint32_t a_ = (a); if (MC_UNLIKELY(a_ >= MC_MMIO_BASE)) '
               'mc_mmio_write(X, a_, %d, (v) & %s); else mc_st%dm(M, a_, v); } while (0)\n' % (n, n // 8, mask, n))
+        # MACSR's N/Z/V/EV after a MAC op, computed when read (mc_mac_flags)
+        w('#define MAC_LAZY(a) do { mfv = macc[a]; mfp = macpav; mfa = (a); mfl = 1; } while (0)\n')
+        w('#define MAC_FLAGS() do { if (mfl) { macflg = mc_mac_flags(macctl | mfp, mfa, mfv); mfl = 0; } } '
+          'while (0)\n')
         w('#define SHADOW 64\n')
         w('int mc_run(mc_ctx *X, mc_cpu *cpu, uint32_t entry, uint32_t stop_pc)\n{\n')
         w('    uint8_t *const M = X->mem;\n')
@@ -1058,8 +1064,10 @@ class Translator:
             w('    uint32_t D%d = cpu->d[%d], A%d = cpu->a[%d];\n' % (i, i, i, i))
         w('    uint32_t sr = cpu->sr, ccx = cpu->cc_x, ccn = cpu->cc_n, ccz = cpu->cc_z, '
           'ccv = cpu->cc_v, ccc = cpu->cc_c;\n')
-        w('    uint32_t macsr = cpu->macsr, macmask = cpu->mac_mask;\n')
+        w('    uint32_t macctl = cpu->macsr & MACSR_CTL, macpav = cpu->macsr & MACSR_PAV, '
+          'macflg = cpu->macsr & MACSR_FLAGS, macmask = cpu->mac_mask;\n')
         w('    uint64_t macc[4] = {cpu->macc[0], cpu->macc[1], cpu->macc[2], cpu->macc[3]};\n')
+        w('    uint64_t mfv = 0; uint32_t mfp = 0; int mfa = 0, mfl = 0;\n')
         w('    uint32_t t = entry, pc = entry; int status = MC_DONE;\n')
         w('    uint32_t ss_pc[SHADOW]; void *ss_lbl[SHADOW]; int ssp = 0;\n')
         w('    goto dispatch;\n\n')
@@ -1132,7 +1140,8 @@ class Translator:
             w('    cpu->d[%d] = D%d; cpu->a[%d] = A%d;\n' % (i, i, i, i))
         w('    cpu->pc = pc; cpu->sr = sr; cpu->cc_x = ccx; cpu->cc_n = ccn; cpu->cc_z = ccz; '
           'cpu->cc_v = ccv; cpu->cc_c = ccc;\n')
-        w('    cpu->macsr = macsr; cpu->mac_mask = macmask;\n')
+        w('    MAC_FLAGS();\n')
+        w('    cpu->macsr = macctl | macpav | macflg; cpu->mac_mask = macmask;\n')
         w('    for (int i = 0; i < 4; i++) cpu->macc[i] = macc[i];\n')
         w('    return status;\n}\n')
         # labels referenced by gotos must exist
