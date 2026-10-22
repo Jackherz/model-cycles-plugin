@@ -55,6 +55,10 @@ const char* const kClockRows[2][N] = {
      "000000000"},
 };
 
+// A die showing five, for the randomise buttons.
+const char* const kDiceRows[N] = {"111111111", "100000001", "101000101", "100000001", "100010001",
+                                  "100000001", "101000101", "100000001", "111111111"};
+
 int rowFor(float v, bool unipolar)
 {
     float y = unipolar ? (1.0f - v) : (1.0f - v) * 0.5f;
@@ -118,6 +122,7 @@ void drawIcon(juce::Graphics& g, IconSet set, int index, juce::Rectangle<int> ar
         case IconSet::Wave: b = waveBits(index); break;
         case IconSet::Trig: b = trigBits(index); break;
         case IconSet::Clock: b = fromRows(kClockRows[juce::jlimit(0, 1, index)]); break;
+        case IconSet::Dice: b = fromRows(kDiceRows); break;
     }
     int x0 = area.getCentreX() - N * scale / 2, y0 = area.getCentreY() - N * scale / 2;
     g.setColour(c);

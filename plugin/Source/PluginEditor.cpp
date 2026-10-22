@@ -6,10 +6,10 @@ using namespace retro;
 
 namespace
 {
-constexpr int kW = 960, kH = 760;
+constexpr int kW = 960, kH = 780;
 // the window's furniture
-const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kToolbar(10, 32, kW - 20, 124), kTabs(14, 160, kW - 28, 24),
-    kPanel(10, 182, kW - 20, 546), kStatus(4, kH - 28, kW - 8, 24);
+const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kMenu(4, 27, kW - 8, 20), kToolbar(10, 52, kW - 20, 124),
+    kTabs(14, 180, kW - 28, 24), kPanel(10, 202, kW - 20, 546), kStatus(4, kH - 28, kW - 8, 24);
 constexpr int kLogoW = 176;
 
 void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
@@ -133,11 +133,21 @@ void ParamControl::resized()
 
 void Section::paint(juce::Graphics& g) { groupBox(g, getLocalBounds(), title, accentFor(*this)); }
 
+void Section::enableDice(std::function<void(bool)> onDice)
+{
+    dice = std::make_unique<IconButton>(IconSet::Dice, 0);
+    dice->onClick = [onDice] { onDice(juce::ModifierKeys::currentModifiers.isShiftDown()); };
+    dice->getProperties().set("helpId", "dice");
+    addAndMakeVisible(*dice);
+}
+
 void Section::resized()
 {
     // A grid as wide as the widest row (at least four columns). Rows of
     // choices, toggles and icons are short; rows with knobs (and custom
     // rows) share the rest, and the spare height spreads out between rows.
+    if (dice)
+        dice->setBounds(getWidth() - 36, 0, 24, 18);
     auto r = getLocalBounds().reduced(12, 8);
     r.removeFromTop(16);
     if (rows.empty())
@@ -624,6 +634,9 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     filter.addRow({make(st, t, "fcut", "Cutoff", S::Knob), make(st, t, "freso", "Reso", S::Knob),
                    make(st, t, "fenv", "Env", S::Knob), make(st, t, "fdec", "Decay", S::Knob)});
     addAndMakeVisible(filterScope);
+    for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
+                                  std::pair{&filter, RandomSection::Filter}})
+        section->enableDice([this, &st, t, which = which](bool variation) { randomise(st, t, which, rng, variation); });
 }
 
 void TrackPage::resized()
@@ -679,6 +692,139 @@ void FxPage::resized()
     noteArea = r.withTrimmedTop(24).removeFromTop(48).reduced(12, 0);
 }
 
+juce::Rectangle<int> MenuStrip::itemArea(int i) const
+{
+    int x = 4;
+    for (int k = 0; k < i; ++k)
+        x += textWidth(menus[(size_t)k].name) + 20;
+    return {x, 0, textWidth(menus[(size_t)i].name) + 20, getHeight()};
+}
+
+void MenuStrip::paint(juce::Graphics& g)
+{
+    g.fillAll(kFace);
+    for (int i = 0; i < (int)menus.size(); ++i)
+    {
+        auto r = itemArea(i);
+        if (i == open)
+        {
+            g.setColour(kNavy);
+            g.fillRect(r.reduced(0, 1));
+        }
+        // Win95 underlines the access letter
+        const auto c = i == open ? kLight : kText;
+        drawText(g, menus[(size_t)i].name, r, juce::Justification::centred, c);
+        g.setColour(c);
+        g.fillRect(r.getCentreX() - textWidth(menus[(size_t)i].name) / 2, r.getCentreY() + 8, 10, 1);
+    }
+    g.setColour(kShadow);
+    g.fillRect(0, getHeight() - 2, getWidth(), 1);
+    g.setColour(kLight);
+    g.fillRect(0, getHeight() - 1, getWidth(), 1);
+}
+
+void MenuStrip::mouseDown(const juce::MouseEvent& e)
+{
+    for (int i = 0; i < (int)menus.size(); ++i)
+        if (itemArea(i).contains(e.getPosition()))
+        {
+            open = i;
+            repaint();
+            auto area = localAreaToGlobal(itemArea(i));
+            menus[(size_t)i].build().showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(area),
+                                                   [safe = juce::Component::SafePointer<MenuStrip>(this)](int) {
+                                                       if (safe)
+                                                       {
+                                                           safe->open = -1;
+                                                           safe->repaint();
+                                                       }
+                                                   });
+            return;
+        }
+}
+
+juce::PopupMenu CyclesEmuEditor::kitMenu()
+{
+    juce::PopupMenu m;
+    m.addItem("Load Kit...", [this] { chooseFile(true, false); });
+    m.addItem("Save Kit As...", [this] { chooseFile(true, true); });
+    m.addSeparator();
+    m.addItem("Randomise All Tracks (Sound)", [this] {
+        for (int t = 0; t < kTracks; ++t)
+            randomise(proc.state(), t, RandomSection::Sound, rng, false);
+    });
+    return m;
+}
+
+juce::PopupMenu CyclesEmuEditor::trackMenu()
+{
+    juce::PopupMenu m;
+    const bool track = current < kTracks;
+    const juce::String n = track ? juce::String(current + 1) : juce::String();
+    m.addItem("Load Track " + n + "...", track, false, [this] { chooseFile(false, false); });
+    m.addItem("Save Track " + n + " As...", track, false, [this] { chooseFile(false, true); });
+    m.addSeparator();
+    m.addItem("Copy Track " + n, track, false, [this] { trackClipboard = trackToTree(proc.state(), current); });
+    m.addItem("Paste to Track " + n, track && trackClipboard.isValid(), false,
+              [this] { treeToTrack(proc.state(), current, trackClipboard); });
+    m.addSeparator();
+    const char* names[] = {"Sound", "LFO", "Filter"};
+    const RandomSection which[] = {RandomSection::Sound, RandomSection::Lfo, RandomSection::Filter};
+    for (int i = 0; i < 3; ++i)
+        m.addItem(juce::String("Randomise ") + names[i], track, false, [this, w = which[i]] { randomiseTrack(w, false); });
+    for (int i = 0; i < 3; ++i)
+        m.addItem(juce::String("Vary ") + names[i], track, false, [this, w = which[i]] { randomiseTrack(w, true); });
+    return m;
+}
+
+juce::PopupMenu CyclesEmuEditor::helpMenu()
+{
+    juce::PopupMenu m;
+    m.addItem("Help Mode (?)", true, helpMode, [this] { setHelpMode(!helpMode); });
+    m.addItem("Show Presets Folder", [] { presetFolder(true).getParentDirectory().revealToUser(); });
+    return m;
+}
+
+void CyclesEmuEditor::randomiseTrack(RandomSection s, bool variation)
+{
+    if (current < kTracks)
+        randomise(proc.state(), current, s, rng, variation);
+}
+
+void CyclesEmuEditor::chooseFile(bool kits, bool saving)
+{
+    const juce::String ext = kits ? "*.cykit" : "*.cytrack";
+    const int track = current;
+    chooser = std::make_unique<juce::FileChooser>(saving ? (kits ? "Save Kit" : "Save Track") : (kits ? "Load Kit" : "Load Track"),
+                                                  presetFolder(kits), ext);
+    auto flags = juce::FileBrowserComponent::canSelectFiles
+                 | (saving ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting
+                           : juce::FileBrowserComponent::openMode);
+    chooser->launchAsync(flags, [this, kits, saving, track](const juce::FileChooser& fc) {
+        auto f = fc.getResult();
+        if (f == juce::File())
+            return;
+        auto& st = proc.state();
+        if (saving)
+        {
+            f = f.withFileExtension(kits ? "cykit" : "cytrack");
+            const bool ok = writeTree(kits ? kitToTree(st) : trackToTree(st, track), f);
+            status.setText(ok ? "Saved " + f.getFileName() : "Could not save " + f.getFileName(),
+                           juce::dontSendNotification);
+            return;
+        }
+        auto tree = readTree(f);
+        if (kits ? !tree.hasType("CyclesKit") : !tree.hasType("CyclesTrack"))
+        {
+            status.setText("Not a " + juce::String(kits ? "kit" : "track") + ": " + f.getFileName(),
+                           juce::dontSendNotification);
+            return;
+        }
+        kits ? treeToKit(st, tree) : treeToTrack(st, track, tree);
+        status.setText("Loaded " + f.getFileName(), juce::dontSendNotification);
+    });
+}
+
 CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p), proc(p)
 {
     setLookAndFeel(&look);
@@ -693,6 +839,10 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     g("keystrack", "Key Trk", S::Knob);
     g("outgain", "Output", S::Knob);
     addAndMakeVisible(codecTempo);   // tempo and host tempo
+    menuBar.menus = {{"Kit", [this] { return kitMenu(); }},
+                     {"Track", [this] { return trackMenu(); }},
+                     {"Help", [this] { return helpMenu(); }}};
+    addAndMakeVisible(menuBar);
     status.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(status);
 
@@ -811,6 +961,7 @@ void CyclesEmuEditor::resized()
     globals[2]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
     codecTempo.setBounds(top.reduced(6, 0).withTrimmedTop(-6));
     status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
+    menuBar.setBounds(kMenu);
     // left of the three caption boxes (3 x 18 + 2 px gap, 3 px margin)
     helpButton.setBounds(kTitle.getRight() - 3 - 56 - 22, kTitle.getY() + 3, 18, 16);
     auto bar = kTabs;

@@ -886,6 +886,51 @@ pass.
 - The help lookup now works by a `helpId` component property, so the Codec
   unit and the filter scope have hover help too.
 
+## Step 18: track presets, kits, randomisation (2026-10-22)
+
+- **Menu bar** (Win95, under the title bar; the window is 960x780):
+  - Kit: Load Kit, Save Kit As, Randomise All Tracks (Sound).
+  - Track (the current track page): Load, Save As, Copy, Paste, Randomise
+    and Vary for Sound, LFO and Filter.
+  - Help: help mode, Show Presets Folder.
+- **Files** (`Source/Presets.*`): XML in `~/Documents/CyclesEmu/Tracks/*.cytrack`
+  and `Kits/*.cykit`, with plain values by bare parameter id, so files
+  survive added parameters.
+  - A track preset is the sound, LFO and filter: everything but level and
+    mute, which belong to the mix.
+  - A kit is all six tracks (with level and mute) and the FX.
+- **Randomise** (`Source/Randomise.*`): a die on each section's title line;
+  shift-click (or Vary in the menu) is a variation that nudges every
+  0..127 knob by ±10. Machine, level and mute are never touched.
+  Distributions:
+  - pitch: 65 % as programmed, else ±3/5/7/12 semitones;
+  - decay: around 30/60/90;
+  - macros: half uniform, half near 0/32/64/96/127;
+  - Vol+Dist: around 64; pan: mostly centre;
+  - sends: about half off;
+  - LFO: any waveform, mostly Trig or Free, mostly synced, multiplier
+    x2..x64, speed ±8..63 (85 % forward); destination from pitch, the
+    macros, decay, pan and filter cutoff/reso; depth ±2..8 on pitch, else
+    ±10..45; fade mostly off;
+  - filter: 30 % off, else a low-pass L4..L30 or a high-pass H2..H20,
+    moderate reso, the envelope half the time.
+- Checked in `CyclesEmuEditorShot`:
+  - a randomised track 1 saved to a file and loaded into track 4: 0 of 26
+    parameters differ, track 4's level kept;
+  - kit round trip: 0 differences;
+  - 2,000 draws: filter off 29 % / LP 45 % / HP 25 %, pitch at 0 65 %,
+    LFO multipliers even.
+
+**SP TWINSHOT** (asked 2026-10-22):
+- Not portable as the Syntakt plays it (Modded-Cycles notes/24). The
+  engine code is in the Syntakt OS (5 functions, cheap), but it plays two
+  of 64 factory samples, which the Syntakt's main CPU sends to the synth
+  chip at boot from its own storage. They are not in the OS file.
+- Possible instead: its engine with **your own samples** loaded as the
+  64-slot bank. That is a new engine port, like Modded-Cycles' five but
+  done by us: relocation, the voice bridge and the parameters. Here its
+  CPU cost would be small.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

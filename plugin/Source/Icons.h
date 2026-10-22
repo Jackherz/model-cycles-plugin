@@ -6,7 +6,7 @@
 
 namespace cyclesemu
 {
-enum class IconSet { Machine, Wave, Trig, Clock };
+enum class IconSet { Machine, Wave, Trig, Clock, Dice };
 
 // Centred in area, `scale` screen pixels per icon pixel.
 void drawIcon(juce::Graphics&, IconSet, int index, juce::Rectangle<int> area, juce::Colour, int scale = 2);

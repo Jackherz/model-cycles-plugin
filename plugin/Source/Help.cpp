@@ -115,6 +115,11 @@ const std::map<juce::String, HelpText> kHelp = {
       "How far an envelope moves the cutoff on each note, up or down (0 is none). It starts on every note "
       "and falls over Env Decay."}},
     {"fdec", {"Filter Env Decay", "How long the filter envelope takes to fall, from 5 ms to 10 seconds."}},
+    {"dice",
+     {"Randomise",
+      "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "
+      "often off, the filter usually off or moderate. The machine, level and mute stay. Shift-click: a "
+      "variation, nudging the current values instead. Track and Kit menus: save, load, copy and paste."}},
     {"delaytime",
      {"Delay Time", "The delay time, synced to tempo: 32 is one beat, 64 two beats."}},
     {"delayfeedback",

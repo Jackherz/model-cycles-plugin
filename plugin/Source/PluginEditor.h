@@ -7,6 +7,8 @@
 #include "Retro.h"
 #include "Help.h"
 #include "Icons.h"
+#include "Presets.h"
+#include "Randomise.h"
 
 // A pictogram button (Icons.h): raised, or a sunken LCD when selected.
 class IconButton : public juce::Button
@@ -68,8 +70,11 @@ public:
     }
     void paint(juce::Graphics&) override;
     void resized() override;
+    // a die on the title line: randomise the section (shift: a variation)
+    void enableDice(std::function<void(bool variation)> onDice);
 
 private:
+    std::unique_ptr<IconButton> dice;
     struct Row
     {
         std::vector<ParamControl*> controls;
@@ -167,6 +172,7 @@ private:
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
+    juce::Random rng;
     std::unique_ptr<juce::ParameterAttachment> machineAtt;
     ParamControl* make(juce::AudioProcessorValueTreeState&, int track, const char* id, const juce::String& label,
                        ParamControl::Style, cyclesemu::IconSet = cyclesemu::IconSet::Machine);
@@ -197,6 +203,24 @@ private:
     cyclesemu::HelpText text;
 };
 
+// A Win95 menu bar: names that open popup menus.
+class MenuStrip : public juce::Component
+{
+public:
+    struct Menu
+    {
+        juce::String name;
+        std::function<juce::PopupMenu()> build;
+    };
+    std::vector<Menu> menus;
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+
+private:
+    juce::Rectangle<int> itemArea(int i) const;
+    int open = -1;
+};
+
 class CyclesEmuEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -214,6 +238,9 @@ public:
 private:
     void timerCallback() override;
     void setHelpMode(bool on);
+    juce::PopupMenu kitMenu(), trackMenu(), helpMenu();
+    void chooseFile(bool kits, bool saving);
+    void randomiseTrack(cyclesemu::RandomSection, bool variation);
     void updateHelp(juce::Component* under);
 
     CyclesEmuProcessor& proc;
@@ -225,6 +252,10 @@ private:
     HelpBubble bubble;
     bool helpMode = false;
     juce::Component* helpTarget = nullptr;
+    MenuStrip menuBar;
+    std::unique_ptr<juce::FileChooser> chooser;
+    juce::ValueTree trackClipboard;
+    juce::Random rng;
     juce::OwnedArray<juce::TextButton> tabs;
     juce::OwnedArray<juce::Component> pages;
     int current = 0;
