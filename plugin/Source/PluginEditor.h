@@ -162,6 +162,7 @@ class TrackPage : public juce::Component
 {
 public:
     TrackPage(CyclesEmuProcessor&, int track);
+    std::function<void(const juce::String&)> beforeChange;   // the editor's undo snapshot
     void resized() override;
 
 private:
@@ -255,6 +256,10 @@ private:
     MenuStrip menuBar;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::ValueTree trackClipboard;
+    // one step of undo for the menus' and dice's changes: the kit before it
+    juce::ValueTree undoKit;
+    juce::String undoWhat;
+    void remember(const juce::String& what);
     juce::Random rng;
     juce::OwnedArray<juce::TextButton> tabs;
     juce::OwnedArray<juce::Component> pages;

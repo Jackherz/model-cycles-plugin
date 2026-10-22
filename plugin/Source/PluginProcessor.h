@@ -78,6 +78,14 @@ public:
     juce::AudioProcessorValueTreeState& state() { return apvts; }
     const juce::String& engineStatus() const { return engineError; }
     double currentBpm() const { return shownBpm.load(); }
+    // Resets, as on the hardware: a track to its machine's init sound (the
+    // firmware's own defaults, defaults.json in the state folder, from
+    // scripts/init_sounds.py), the kit to the one a new project starts with
+    // (the engine state's kit, as loaded). Message thread.
+    bool canResetTrack() const { return haveInitSounds; }
+    void resetTrack(int track);
+    void resetKit();
+    const juce::ValueTree& newKit() const { return initKit; }
     // the output's peak over the last callback (0..), for the editor's meter
     float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
 
@@ -122,6 +130,9 @@ private:
     double targetBpm = 120.0, appliedBpm = 0.0;
     std::atomic<double> shownBpm{120.0};
     std::atomic<float> outPeak{0.0f};
+    int initSound[11][33] = {};
+    bool haveInitSounds = false;
+    juce::ValueTree initKit;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CyclesEmuProcessor)
 };

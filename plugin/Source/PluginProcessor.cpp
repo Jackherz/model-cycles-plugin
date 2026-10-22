@@ -26,6 +26,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Presets.h"
 #include <cstring>
 
 namespace cyclesemu
@@ -197,7 +198,59 @@ CyclesEmuProcessor::CyclesEmuProcessor()
         s.lastParam = v;
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
     }
+    // what the resets go back to
+    initKit = kitToTree(apvts);
+    if (auto json = juce::JSON::parse(stateDir().getChildFile("defaults.json")); json.isObject())
+    {
+        auto* sounds = json["sound"].getDynamicObject();
+        haveInitSounds = sounds != nullptr;
+        for (int m = 0; haveInitSounds && m < 11; ++m)
+        {
+            auto snd = (*sounds).getProperty(juce::String(m));
+            haveInitSounds = snd.isObject();
+            for (int k = 0; haveInitSounds && k < 33; ++k)
+                initSound[m][k] = snd[juce::Identifier(juce::String(k))];
+        }
+    }
 }
+
+void CyclesEmuProcessor::resetTrack(int t)
+{
+    if (!haveInitSounds || t < 0 || t >= kTracks)
+        return;
+    auto plain = [&](const char* id) {
+        auto* p = apvts.getParameter(paramId(t, id));
+        return juce::roundToInt(p->convertFrom0to1(p->getValue()));
+    };
+    const int machine = juce::jlimit(0, 10, plain("machine"));
+    const int* k = initSound[machine];
+    for (int i = 0; i < kNumTrackParams; ++i)
+    {
+        const auto& d = kTrackParams[i];
+        const juce::String id = paramId(t, d.id);
+        switch (d.kind)
+        {
+            case Kind::Sound: setPlain(apvts, id, (float)k[(d.offset - 0x14) / 2]); break;
+            // the firmware's multiplier 0-23: 0-11 synced x1..x2k, 12-23 free
+            case Kind::LfoSync: setPlain(apvts, id, k[2] >= 12 ? 1.0f : 0.0f); break;
+            case Kind::LfoMult: setPlain(apvts, id, (float)(k[2] % 12)); break;
+            case Kind::LfoDest:
+                for (int j = 0; j < kNumLfoDests; ++j)
+                    if (kLfoDestValues[j] == k[4])
+                        setPlain(apvts, id, (float)j);
+                break;
+            case Kind::Mute: setPlain(apvts, id, 0.0f); break;
+            case Kind::Level:   // the level a new kit gives this track
+                for (auto tr : initKit)
+                    if (tr.hasType("Track") && (int)tr.getProperty("index") == t)
+                        setPlain(apvts, id, (float)tr.getProperty("level"));
+                break;
+            case Kind::Fx: break;
+        }
+    }
+}
+
+void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
 
 CyclesEmuProcessor::~CyclesEmuProcessor() { mc_engine_free(engine); }
 

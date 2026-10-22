@@ -945,6 +945,30 @@ pass.
 - Checked in EditorShot: typing 100 into track 1's Decay sets it to 100
   (`notes/editor-typing.png` is mid-entry).
 
+## Step 20: Reset Track, Reset Kit, Undo (2026-10-22)
+
+- **Reset Track** (Track menu): the track's sound back to its machine's
+  **init sound, as the firmware makes it**. Level goes to the new kit's,
+  mute off.
+  - The values come from the firmware's init-sound function `0x40061866`
+    (sound, unused, machine), which writes each k 0..32 from the
+    descriptors' defaults.
+  - `scripts/init_sounds.py CAPTURE 11 OUT` runs it in Unicorn for every
+    machine and writes `defaults.json`. That file is firmware-derived: it
+    goes in the engine state folder (now part of
+    `scripts/firmware_pipeline.sh`), never in the repository.
+  - Without the file, the menu item is greyed.
+- **Reset Kit** (Kit menu): back to the kit a new project starts with. The
+  engine state is a freshly booted new project, so the processor snapshots
+  its kit (all tracks, levels, mutes, FX) as it loads.
+- **Undo** (Kit menu): one step, covering Reset, Load, Paste, Randomise,
+  Vary and the dice. It restores the whole kit as it was; choosing it again
+  redoes.
+- Checked in EditorShot:
+  - a randomised track 2 reset: 0 of 23 sound parameters differ from
+    `defaults.json`;
+  - a randomised kit reset: identical to the new kit.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

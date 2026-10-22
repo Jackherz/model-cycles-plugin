@@ -148,6 +148,44 @@ int main(int argc, char** argv)
         juce::PNGImageFormat().writeImageToStream(img, os);
     }
 
+    // resets: a randomised track 2 back to its machine's init sound (checked
+    // against defaults.json), then a randomised kit back to the new kit
+    {
+        using namespace cyclesemu;
+        auto& st = proc.state();
+        juce::Random rng(99);
+        auto plain = [&](const juce::String& id) {
+            auto* p = st.getParameter(id);
+            return juce::roundToInt(p->convertFrom0to1(p->getValue()));
+        };
+        const auto& fresh = proc.newKit();
+        for (auto s : {RandomSection::Sound, RandomSection::Lfo, RandomSection::Filter})
+            randomise(st, 1, s, rng, false);
+        proc.resetTrack(1);
+        auto json = juce::JSON::parse(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                                          .getChildFile("Application Support/CyclesEmu/state/defaults.json"));
+        const int m = plain("t2_machine");
+        int bad = 0, n = 0;
+        for (int i = 0; i < kNumTrackParams; ++i)
+            if (kTrackParams[i].kind == Kind::Sound)
+            {
+                const int want = json["sound"][juce::Identifier(juce::String(m))]
+                                     [juce::Identifier(juce::String((kTrackParams[i].offset - 0x14) / 2))];
+                bad += plain(paramId(1, kTrackParams[i].id)) != want;
+                ++n;
+            }
+        std::printf("reset track 2 (machine %d): %d of %d sound parameters differ from the firmware's init sound\n",
+                    m, bad, n);
+        for (int t = 0; t < kTracks; ++t)
+            randomise(st, t, RandomSection::Sound, rng, false);
+        proc.resetKit();
+        auto again = kitToTree(st);
+        int kd = 0;
+        for (int i = 0; i < fresh.getNumChildren(); ++i)
+            kd += !fresh.getChild(i).isEquivalentTo(again.getChild(i));
+        std::printf("reset kit: %d of %d kit sections differ from the new kit\n", kd, fresh.getNumChildren());
+    }
+
     // typing a value: click track 1's Decay readout, type 100, Return
     {
         e->showPage(0);

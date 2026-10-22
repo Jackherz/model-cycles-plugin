@@ -19,4 +19,6 @@ uv run --no-sync python ../../scripts/capture.py --calls 200 --midi 20:90:3c:64 
   --midi 160:b0:4a:20 --midi 165:b1:4a:68 --midi 168:b1:47:60 --midi 170:b0:5e:7f \
   --out ../../$ROOT/cap-driven | tail -2
 echo "== state"; uv run --no-sync python ../../aot/dump_state.py ../../$ROOT/cap-driven ../../$ROOT/aot-state
+echo "== init sounds"; uv run --no-sync python ../../scripts/init_sounds.py ../../$ROOT/cap-driven \
+  $CYCLES_MACHINES ../../$ROOT/aot-state/defaults.json | tail -1
 echo "== done"

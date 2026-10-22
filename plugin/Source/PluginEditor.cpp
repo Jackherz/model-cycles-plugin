@@ -636,7 +636,11 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     addAndMakeVisible(filterScope);
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
-        section->enableDice([this, &st, t, which = which](bool variation) { randomise(st, t, which, rng, variation); });
+        section->enableDice([this, &st, t, which = which](bool variation) {
+            if (beforeChange)
+                beforeChange(variation ? "Vary" : "Randomise");
+            randomise(st, t, which, rng, variation);
+        });
 }
 
 void TrackPage::resized()
@@ -746,10 +750,24 @@ void MenuStrip::mouseDown(const juce::MouseEvent& e)
 juce::PopupMenu CyclesEmuEditor::kitMenu()
 {
     juce::PopupMenu m;
+    m.addItem(undoWhat.isEmpty() ? juce::String("Undo") : "Undo " + undoWhat, undoKit.isValid(), false, [this] {
+        auto redo = kitToTree(proc.state());
+        treeToKit(proc.state(), undoKit);
+        undoKit = redo;   // undo again: redo
+        undoWhat = "Undo";
+        status.setText("Undone", juce::dontSendNotification);
+    });
+    m.addSeparator();
     m.addItem("Load Kit...", [this] { chooseFile(true, false); });
     m.addItem("Save Kit As...", [this] { chooseFile(true, true); });
     m.addSeparator();
+    m.addItem("Reset Kit (new project's kit)", [this] {
+        remember("Reset Kit");
+        proc.resetKit();
+        status.setText("Kit reset", juce::dontSendNotification);
+    });
     m.addItem("Randomise All Tracks (Sound)", [this] {
+        remember("Randomise All");
         for (int t = 0; t < kTracks; ++t)
             randomise(proc.state(), t, RandomSection::Sound, rng, false);
     });
@@ -765,8 +783,15 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
     m.addItem("Save Track " + n + " As...", track, false, [this] { chooseFile(false, true); });
     m.addSeparator();
     m.addItem("Copy Track " + n, track, false, [this] { trackClipboard = trackToTree(proc.state(), current); });
-    m.addItem("Paste to Track " + n, track && trackClipboard.isValid(), false,
-              [this] { treeToTrack(proc.state(), current, trackClipboard); });
+    m.addItem("Paste to Track " + n, track && trackClipboard.isValid(), false, [this] {
+        remember("Paste");
+        treeToTrack(proc.state(), current, trackClipboard);
+    });
+    m.addItem("Reset Track " + n + " (init sound)", track && proc.canResetTrack(), false, [this] {
+        remember("Reset Track");
+        proc.resetTrack(current);
+        status.setText("Track " + juce::String(current + 1) + " reset", juce::dontSendNotification);
+    });
     m.addSeparator();
     const char* names[] = {"Sound", "LFO", "Filter"};
     const RandomSection which[] = {RandomSection::Sound, RandomSection::Lfo, RandomSection::Filter};
@@ -788,7 +813,16 @@ juce::PopupMenu CyclesEmuEditor::helpMenu()
 void CyclesEmuEditor::randomiseTrack(RandomSection s, bool variation)
 {
     if (current < kTracks)
+    {
+        remember(variation ? "Vary" : "Randomise");
         randomise(proc.state(), current, s, rng, variation);
+    }
+}
+
+void CyclesEmuEditor::remember(const juce::String& what)
+{
+    undoKit = kitToTree(proc.state());
+    undoWhat = what;
 }
 
 void CyclesEmuEditor::chooseFile(bool kits, bool saving)
@@ -820,6 +854,7 @@ void CyclesEmuEditor::chooseFile(bool kits, bool saving)
                            juce::dontSendNotification);
             return;
         }
+        remember(kits ? "Load Kit" : "Load Track");
         kits ? treeToKit(st, tree) : treeToTrack(st, track, tree);
         status.setText("Loaded " + f.getFileName(), juce::dontSendNotification);
     });
@@ -855,7 +890,11 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         setAccent(*b, kAccents[i]);
         b->onClick = [this, i] { showPage(i); };
         if (i < kTracks)
-            pages.add(new TrackPage(p, i));
+        {
+            auto* tp = new TrackPage(p, i);
+            tp->beforeChange = [this](const juce::String& what) { remember(what); };
+            pages.add(tp);
+        }
         else
             pages.add(new FxPage(st));
         setAccent(*pages.getLast(), kAccents[i]);
