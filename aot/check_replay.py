@@ -41,7 +41,7 @@ class MmioRec(C.Structure):
 
 
 class Aot:
-    def __init__(self, lib=os.path.join(P, 'aot', 'build', 'libmcrender.dylib')):
+    def __init__(self, lib=os.environ.get('MC_RENDER_LIB') or os.path.join(P, 'aot', 'build', 'libmcrender.dylib')):
         self.lib = L = C.CDLL(lib)
         L.mc_ctx_new.restype = C.c_void_p
         L.mc_run.argtypes = [C.c_void_p, C.POINTER(Cpu), C.c_uint32, C.c_uint32]
@@ -99,6 +99,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('capture')
     ap.add_argument('--stop', action='store_true', help='stop at the first mismatch')
+    ap.add_argument('--ignore', action='append', default=[], metavar='LO:HI',
+                    help='an address range not compared (hex), e.g. 43032000:43032100, the load '
+                         'governor of the Syntakt-engine build, whose clock the AOT engine holds still; '
+                         'still restored to digiemu\'s bytes after each call')
     args = ap.parse_args()
     with gzip.open(os.path.join(args.capture, 'base.pkl.gz')) as f:
         base = pickle.load(f)
@@ -118,6 +122,8 @@ def main():
     expected = {}
     ok = bad = 0
     t_run = 0.0
+    ignore = [tuple(int(x, 16) for x in r.split(':')) for r in args.ignore]
+    ignored = 0
     for k, c in enumerate(calls):
         for p, data in c['entry'].items():
             aot.write(p, data)
@@ -150,8 +156,12 @@ def main():
                 want = expected[p] = base_page(p)
             got = aot.read(p, PAGE)
             if got != want:
-                first = next(i for i in range(PAGE) if got[i] != want[i])
-                diffs.append('%08x' % (p + first))
+                offs = [i for i in range(PAGE) if got[i] != want[i]
+                        and not any(lo <= p + i < hi for lo, hi in ignore)]
+                if offs:
+                    diffs.append('%08x' % (p + offs[0]))
+                else:
+                    ignored += 1
                 aot.write(p, want)
         if diffs:
             problems.append('pages differ at ' + ' '.join(diffs[:8]))
@@ -164,6 +174,8 @@ def main():
             ok += 1
     print('%d/%d calls bit-exact (%d mismatched), %.3f ms per call in the AOT render'
           % (ok, ok + bad, bad, 1e3 * t_run / max(1, ok + bad)))
+    if ignore:
+        print('  (%d page differences only inside the ignored ranges)' % ignored)
 
 
 if __name__ == '__main__':

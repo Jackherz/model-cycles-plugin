@@ -1,6 +1,7 @@
 # Elektron firmware and anything derived from it: never commit.
 firmware/
 data/
+data-st/
 *.syx
 *.snap
 *.img
@@ -11,6 +12,7 @@ notes/*.log
 # Separate upstream checkouts
 re/
 build/
+build-st/
 .DS_Store
 __pycache__/
 plugin/build/

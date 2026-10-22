@@ -40,7 +40,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('capture')
     ap.add_argument('--keep-going', action='store_true')
+    ap.add_argument('--between', action='store_true',
+                    help='also apply what the firmware did between blocks outside the engine API: SRAM '
+                         'writes and its clock ISR\'s type-5 events (scripts/driven.py --between)')
+    ap.add_argument('--ignore', action='append', default=[], metavar='LO:HI',
+                    help='an address range not compared (hex): the load governor of the Syntakt-engine '
+                         'build (43032000:43033000), whose clock the AOT engine holds still')
     args = ap.parse_args()
+    ignore = [tuple(int(x, 16) for x in r.split(':')) for r in args.ignore]
     with gzip.open(os.path.join(args.capture, 'base.pkl.gz')) as f:
         base = pickle.load(f)
     with gzip.open(os.path.join(args.capture, 'calls.pkl.gz')) as f:
@@ -64,10 +71,31 @@ def main():
     known = {}
     ok = bad = 0
     t_calls = t_render = 0.0
+    def engine_call(k, name, func, fargs):
+        aot.write(CALL_SP, b''.join(v.to_bytes(4, 'big') for v in [SENTINEL] + list(fargs)))
+        cpu = Cpu.from_buffer_copy(template)
+        cpu.a[7] = CALL_SP
+        st, _ = aot.run(cpu, func, SENTINEL)
+        if st != 0:
+            raise SystemExit('call %d: engine call %s failed: %s at %08x' % (k, name, STATUS.get(st, st), cpu.pc))
+        return cpu.d[0]
+
     for k, c in enumerate(calls):
         for a in c['actions']:
             if a[0] == 'kitw':
                 aot.write(a[1], a[3].to_bytes(a[2], 'big'))
+            elif a[0] == 'sramw':
+                if args.between:
+                    aot.write(a[1], a[3].to_bytes(a[2], 'big'))
+            elif a[0] == 'call' and a[1] == 'queue_timed':
+                if not args.between:
+                    raise SystemExit('call %d: a sequencer-timed event (see --between)' % k)
+                # as scripts/driven.py: the clock ISR's pool alloc, type 5, queue
+                ev = engine_call(k, 'alloc', 0x40091eb6, [])
+                if ev != a[3][0]:
+                    raise SystemExit('call %d: pool gave %08x, digiemu %08x' % (k, ev, a[3][0]))
+                aot.write(ev, (5).to_bytes(4, 'big'))
+                engine_call(k, 'queue_timed', a[2], a[3])
             elif a[0] == 'call':
                 _, name, func, fargs, blk = a
                 if blk:
@@ -88,6 +116,10 @@ def main():
         aot.write(0xfc04c010, (0x80000000).to_bytes(4, 'big'))
         aot.write(0xfc045640, RING_HALVES[(k + phase) & 1].to_bytes(4, 'big'))
         aot.write(0xfc050014, bytes(4))
+        # as engine.c: read only by the Syntakt-engine build
+        aot.write(0xfc0453de, (0x80).to_bytes(2, 'big'))
+        aot.write(0xfc048010, bytes(4))
+        aot.write(0xfc07000c, bytes(4))
 
         for p, data in c['entry'].items():
             known[p] = data
@@ -116,7 +148,8 @@ def main():
         for p in pages:
             got_after = aot.read(p, PAGE)
             touched = set(changes(got_before[p], got_after)) | set(changes(want_before[p], want_after[p]))
-            touched = {i for i in touched if not c['sp'] - 0x2000 <= p + i < c['sp'] + 8}
+            touched = {i for i in touched if not c['sp'] - 0x2000 <= p + i < c['sp'] + 8
+                       and not any(lo <= p + i < hi for lo, hi in ignore)}
             if any(got_after[i] != want_after[p][i] for i in touched):
                 bad_pages.append(p)
         if bad_pages:

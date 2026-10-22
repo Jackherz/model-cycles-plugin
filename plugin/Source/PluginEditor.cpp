@@ -93,6 +93,15 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
     }
 }
 
+void ParamControl::setLabel(const juce::String& text)
+{
+    label = text;
+    if (style == Style::Toggle)
+        toggle.setButtonText(text);
+    else
+        caption.setText(text, juce::dontSendNotification);
+}
+
 void ParamControl::resized()
 {
     auto r = getLocalBounds();
@@ -222,9 +231,17 @@ double LfoScope::cyclesPerSecond(const State& s) const
     return perBar / (240.0 / (s.sync == 0 ? juce::jmax(1.0, s.bpm) : 120.0));
 }
 
-// The window shows two cycles from the note. Fade's time scale is not
-// measured: drawn as |fade| / 64 of the window.
-float LfoScope::valueAt(const State& s, double t) const
+// One bar from the note: one bar of the tempo when synced, of 120 BPM (two
+// seconds) when free. At least one cycle is shown, so slow LFOs keep
+// their shape; 64 at most, past which the header's rate says the rest.
+double LfoScope::windowCycles(const State& s) const
+{
+    const double perBar = std::abs(s.speed - 64) * std::ldexp(1.0, s.mult) / 128.0;
+    return juce::jlimit(1.0, 64.0, perBar);
+}
+
+// Fade's time scale is not measured: drawn as |fade| / 64 of the window.
+float LfoScope::valueAt(const State& s, double t, double window) const
 {
     double run = t;
     if (s.trig == 2)
@@ -237,7 +254,7 @@ float LfoScope::valueAt(const State& s, double t) const
     float v = lfoWave(s.wave, s.phase / 128.0 + dir * run) * (float)(s.depth - 64) / 64.0f;
     if (int f = s.fade - 64; f != 0)
     {
-        double len = std::abs(f) / 64.0 * 2.0;
+        double len = std::abs(f) / 64.0 * window;
         v *= (float)(f > 0 ? juce::jmax(0.0, 1.0 - t / len) : juce::jmin(1.0, t / len));
     }
     return juce::jlimit(-1.0f, 1.0f, v);
@@ -249,25 +266,9 @@ void LfoScope::timerCallback()
 {
     if (!isShowing())
         return;
-    auto s = read();
-    int x = -1;
-    double cps = cyclesPerSecond(s);
-    if (cps > 0.0 && cps < 12.0 && s.depth != 64)   // faster than that, a dot only flickers
-    {
-        // Free ignores notes: its position counts from the engine's start
-        double cyc = (s.trig == 0 ? proc.secondsRunning() : proc.secondsSinceTrig(track)) * cps;
-        if (s.trig == 3)
-            cyc = juce::jmin(cyc, 1.0);
-        else if (s.trig == 4)
-            cyc = juce::jmin(cyc, 0.5);
-        else if (s.trig == 2)
-            cyc = 0.0;
-        x = (int)(std::fmod(cyc, 2.0) / 2.0 * plotArea().getWidth()) & ~1;
-    }
-    if (s != shown || x != dotX)
+    if (auto s = read(); s != shown)
     {
         shown = s;
-        dotX = x;
         repaint();
     }
 }
@@ -304,44 +305,48 @@ void LfoScope::paint(juce::Graphics& g)
              s.dest == 0 ? dim : kLcdText);
 
     auto p = plotArea();
-    int cy = p.getCentreY(), half = p.getHeight() / 2 - 1, w = p.getWidth();
-    // dashed zero line and the cycle boundary
+    const int cy = p.getCentreY(), half = p.getHeight() / 2 - 1, w = p.getWidth();
+    const double window = windowCycles(s);
+    // dashed zero line; a tick per cycle while they are few enough to count
+    g.setColour(faint);
     for (int x = p.getX(); x < p.getRight(); x += 6)
-        g.setColour(faint), g.fillRect(x, cy, 3, 1);
-    for (int y = p.getY(); y < p.getBottom(); y += 6)
-        g.fillRect(p.getX() + w / 2, y, 1, 3);
+        g.fillRect(x, cy, 3, 1);
+    if (window <= 16.0)
+        for (int k = 1; k < (int)std::ceil(window); ++k)
+            for (int y = p.getY(); y < p.getBottom(); y += 6)
+                g.fillRect(p.getX() + (int)(k / window * w), y, 1, 3);
     // the note: a bar at the left
     g.setColour(dim);
     g.fillRect(p.getX(), p.getY(), 2, p.getHeight());
 
+    // Each 2-pixel column draws the curve's range over its slice of time,
+    // so a dense LFO reads as a band rather than aliasing.
     auto curve = [&](auto value, juce::Colour c) {
         g.setColour(c);
-        int prev = -1;
+        int prevLo = -1, prevHi = -1;
+        const double per = window / (w / 2.0);                 // cycles per column
+        const int sub = juce::jlimit(1, 64, (int)std::ceil(per * 24.0));
         for (int x = 0; x < w; x += 2)
         {
-            int y = cy - juce::roundToInt(value(x * 2.0 / w) * half);
-            y = juce::jlimit(p.getY(), p.getBottom() - 2, y) & ~1;
-            if (prev >= 0)
-                g.fillRect(p.getX() + x, juce::jmin(prev, y), 2, std::abs(prev - y) + 2);
-            else
-                g.fillRect(p.getX() + x, y, 2, 2);
-            prev = y;
+            float lo = 2.0f, hi = -2.0f;
+            for (int i = 0; i <= sub; ++i)
+            {
+                float v = value((x / 2 + (double)i / sub) * per);
+                lo = juce::jmin(lo, v), hi = juce::jmax(hi, v);
+            }
+            int yTop = juce::jlimit(p.getY(), p.getBottom() - 2, (cy - juce::roundToInt(hi * half)) & ~1);
+            int yBot = juce::jlimit(p.getY(), p.getBottom() - 2, (cy - juce::roundToInt(lo * half)) & ~1);
+            if (prevLo >= 0)   // join to the previous column
+                yTop = juce::jmin(yTop, prevHi), yBot = juce::jmax(yBot, prevLo);
+            g.fillRect(p.getX() + x, yTop, 2, yBot - yTop + 2);
+            prevHi = juce::jlimit(p.getY(), p.getBottom() - 2, (cy - juce::roundToInt(hi * half)) & ~1);
+            prevLo = juce::jlimit(p.getY(), p.getBottom() - 2, (cy - juce::roundToInt(lo * half)) & ~1);
         }
     };
     // the plain waveform behind, then the LFO as it plays
-    double dir = s.speed >= 64 ? 1.0 : -1.0;
+    const double dir = s.speed >= 64 ? 1.0 : -1.0;
     curve([&](double t) { return lfoWave(s.wave, s.phase / 128.0 + dir * t); }, faint);
-    curve([&](double t) { return valueAt(s, t); }, kLcdText);
-
-    if (dotX >= 0)
-    {
-        int y = cy - juce::roundToInt(valueAt(s, dotX * 2.0 / w) * half);
-        auto d = juce::Rectangle<int>(p.getX() + dotX - 3, y - 3, 6, 6);
-        g.setColour(kLight);
-        g.fillRect(d);
-        g.setColour(kDark);
-        g.drawRect(d.expanded(1), 1);
-    }
+    curve([&](double t) { return valueAt(s, t, window); }, kLcdText);
 }
 
 TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t)
@@ -350,12 +355,36 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t)
     auto& st = proc.state();
     addAndMakeVisible(sound);
     addAndMakeVisible(lfo);
-    sound.addRow({make(st, t, "machine", "Machine", S::Icons, IconSet::Machine),
-                  make(st, t, "punch", "Punch", S::Toggle), make(st, t, "gate", "Gate", S::Toggle),
-                  make(st, t, "mute", "Mute", S::Toggle)});
-    sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob),
-                  make(st, t, "color", "Color", S::Knob), make(st, t, "shape", "Shape", S::Knob),
-                  make(st, t, "sweep", "Sweep", S::Knob), make(st, t, "contour", "Contour", S::Knob)});
+    auto* punch = make(st, t, "punch", "Punch", S::Toggle);
+    sound.addRow({make(st, t, "machine", "Machine", S::Icons, IconSet::Machine), punch,
+                  make(st, t, "gate", "Gate", S::Toggle), make(st, t, "mute", "Mute", S::Toggle)});
+    auto* color = make(st, t, "color", "Color", S::Knob);
+    auto* shape = make(st, t, "shape", "Shape", S::Knob);
+    auto* sweep = make(st, t, "sweep", "Sweep", S::Knob);
+    auto* contour = make(st, t, "contour", "Contour", S::Knob);
+    sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob), color, shape,
+                  sweep, contour});
+    macroKnobs[0] = color, macroKnobs[1] = shape, macroKnobs[2] = sweep, macroKnobs[3] = contour,
+    macroKnobs[4] = punch;
+    // Modded-Cycles' guide: what each Syntakt engine maps the knobs to
+    // (full names in Help.cpp), shortened to fit the pixel font
+    machineAtt = std::make_unique<juce::ParameterAttachment>(
+        *st.getParameter(paramId(t, "machine")),
+        [this](float v) {
+            static const char* labels[6][5] = {
+                {"Color", "Shape", "Sweep", "Contour", "Punch"},   // the six originals
+                {"Inharm", "Frq Cpx", "P.Sweep", "Mod Env", "Punch"},
+                {"Body Ch", "Balance", "Spc Crn", "Body Ev", "Punch"},
+                {"Form", "Impact", "Bright", "Prt Dec", "Punch"},
+                {"Detune", "Balance", "Rate Rx", "Wave", "Bits"},
+                {"Nse Mod", "Det Anm", "Detune", "Osc Mix", "Sub"},
+            };
+            int m = juce::roundToInt(v), row = m < 6 ? 0 : m - 5;
+            for (int i = 0; i < 5; ++i)
+                macroKnobs[i]->setLabel(labels[row][i]);
+        },
+        nullptr);
+    machineAtt->sendInitialUpdate();
     sound.addRow({make(st, t, "voldist", "Vol+Dst", S::Knob), make(st, t, "pan", "Pan", S::Knob),
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});

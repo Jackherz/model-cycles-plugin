@@ -29,6 +29,7 @@ public:
     ParamControl(juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& label, Style,
                  cyclesemu::IconSet icons = cyclesemu::IconSet::Machine);
     void resized() override;
+    void setLabel(const juce::String&);   // a new caption (knobs, toggles)
     Style style;
     juce::String paramID;
     int preferredWidth = 0;   // in a row without knobs; 0 shares the rest
@@ -79,10 +80,11 @@ private:
     std::vector<Row> rows;
 };
 
-// The LFO as it will play: the waveform with depth, start phase, fade,
-// direction and trig mode applied, the ghost of the plain waveform behind
-// it, and a dot at the LFO's estimated position (from the time since the
-// track's last note and the rate). Redrawn only when something changes.
+// The LFO as it will play over one bar from the note: the waveform with
+// depth, start phase, fade, direction and trig mode applied, over the ghost
+// of the plain waveform. The faster the LFO, the more cycles fit in the bar,
+// growing continuously (one cycle at least, 64 at most), so the drawing
+// itself shows the speed as it changes. Redrawn only when something changes.
 class LfoScope : public juce::Component, private juce::Timer
 {
 public:
@@ -99,7 +101,8 @@ private:
     };
     State read() const;
     double cyclesPerSecond(const State&) const;
-    float valueAt(const State&, double cycles) const;   // -1..1, cycles since the trig
+    double windowCycles(const State&) const;            // cycles drawn
+    float valueAt(const State&, double cycles, double window) const;   // -1..1
     void timerCallback() override;
     juce::Rectangle<int> plotArea() const;
 
@@ -107,7 +110,6 @@ private:
     int track;
     std::atomic<float>* raw[9];
     State shown{};
-    int dotX = -1;
 };
 
 class TrackPage : public juce::Component
@@ -120,6 +122,10 @@ private:
     std::vector<std::unique_ptr<ParamControl>> controls;
     Section sound{"SOUND"}, lfo{"LFO"};
     LfoScope scope;
+    // the machine knobs (color, shape, sweep, contour) and punch, relabelled
+    // for the Syntakt engines, which map them to parameters of their own
+    ParamControl* macroKnobs[5] = {};
+    std::unique_ptr<juce::ParameterAttachment> machineAtt;
     ParamControl* make(juce::AudioProcessorValueTreeState&, int track, const char* id, const juce::String& label,
                        ParamControl::Style, cyclesemu::IconSet = cyclesemu::IconSet::Machine);
 };

@@ -70,7 +70,23 @@ class Replay:
         if self.trace is not None:
             self.trace.append((address,) + tuple(uc.reg_read(r) for r in REGS))
 
+    # by_address: serve each peripheral its own recorded values in order
+    # (missing ones read 0) instead of requiring digiemu's exact read order.
+    # For driven runs where one path legitimately differs (a UI post that
+    # reads 0xFC050014 only when a task waits) and later reads must not
+    # shift by one. Differences still show in writes and memory.
+    by_address = False
+
     def _mmio_read(self, uc, access, address, size, value, _):
+        if self.by_address:
+            for i, (a, s, v) in enumerate(self.reads):
+                if (a, s) == (address, size):
+                    del self.reads[i]
+                    break
+            else:
+                v = 0
+            uc.mem_write(address, v.to_bytes(size, 'big'))
+            return
         if not self.reads:
             raise Mismatch('extra peripheral read %08x/%d' % (address, size))
         a, s, v = self.reads.pop(0)
@@ -103,7 +119,7 @@ class Replay:
                 compare_traces(c['trace'], self.trace)
                 self.trace = None
         self.edma.service(0)
-        if self.reads:
+        if self.reads and not self.by_address:
             raise Mismatch('%d peripheral reads not made' % len(self.reads))
         if self.writes != c['mmio_w']:
             for i, (got, want) in enumerate(zip(self.writes, c['mmio_w'])):

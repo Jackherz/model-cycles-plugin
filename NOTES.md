@@ -647,12 +647,10 @@ What changed here, kept to the Win95/PS1 look:
     waveform.
   - Header: the waveform, the cycle length (bars or beats when synced,
     Hz when free or very fast) and the destination.
-  - A white dot marks the estimated position. It is computed from engine
-    time since the track's last note-on (`secondsSinceTrig`, two relaxed
-    atomics in the audio thread), or since start in Free mode. It is not
-    read from the firmware.
-  - It checks at 30 Hz while visible and repaints only on change. With no
-    host running, it stays idle.
+  - (Superseded in step 16: a white dot marked the LFO's estimated
+    position, which vanished at high rates. The window is now one bar, and
+    the number of cycles drawn grows with the speed.)
+  - It checks at 30 Hz while visible and repaints only on change.
   - Rate is exact (step 11's measurement): speed x multiplier / 128
     cycles a bar.
   - **Approximate:** the fade time scale is drawn as |fade|/64 of the
@@ -730,6 +728,85 @@ Checks, all passing:
   double-precision evaluation of the same kernel, residual -142.7 dB.
 - auval passes.
 
+## Step 16: the Syntakt's digital engines (2026-10-22), route A
+
+Machines 7-11 are now **SD Vintage, CP Vintage, SY Toy, SY Bits and SY
+Swarm**: the Syntakt's own engine code, inside Model:Cycles 1.13 by
+Modded-Cycles' tweak `syntakt-sd-cp-toy-bits-swarm`.
+
+What it is: the tweak copies the five engines' code and tables (and a
+voice bridge with a load governor) from the user's `Syntakt_OS1.42.syx`
+into a 269 KB payload. Boot copies it to `0x43000000`, then the code and
+three tables into internal SRAM (`0x8000xxxx`, where it runs). The tweak
+makes 124 patches to the MAIN OS: machine limits, the voice loop detour
+at `0x400a7dfe`, a probe around the audio call, and others.
+
+### The pipeline, all local
+
+1. **Build** (Jack's two files, `re/modded-cycles` cloned 2026-10-22 at
+   2594419):
+   `python3 re/modded-cycles/tools/build.py -i firmware/model-cycles_OS1.13.syx --syntakt firmware/Syntakt_OS1.42.syx -t syntakt-sd-cp-toy-bits-swarm -o data-st/model-cycles_OS1.13_syntakt5.syx`
+   It patches 269,894 bytes; patched MAIN OS sha256 `c6cdfe22…7c`.
+2. **Boot** (`scripts/boot_firmware.py data-st SYX`): digiemu's own first
+   run (extract, format a card, cold boot, intro, settle). Settled at
+   600M instructions. `data-st/devices/` overlays digiemu's device file
+   with this build's sha256.
+3. **Tools on it**: `CYCLES_FW=data-st:model-cycles_OS1.13_syntakt5.syx`
+   (`scripts/emuhost.py`). `CYCLES_MACHINES=11` gives `engine_inputs.py`
+   the firmware's clamp: CC 70 = 127 selects machine 10.
+4. **Coverage**: `scripts/coverage_batch.sh` with `MACHINES="0 … 10"`, plus
+   scenarios for the knobs the Syntakt engines map differently. 1,530
+   blocks (stock: 991).
+5. **State**: `capture.py` (no `--stop`: this OS boots stopped, and two STOP
+   presses started it), then `dump_state.py` -> `data-st/aot-state`.
+   Installed as `~/Library/Application Support/CyclesEmu/state`; the stock
+   one is kept as `state-stock`, the modded one as `state-syntakt5`.
+6. **Translate**:
+   `translate.py --sections ../data-st/sections --coverage ../data-st/coverage.json --state ../data-st/aot-state --code 43000000:43042000 --code 80000000:80010000 --out build-st/render.c`.
+   The translator now also reads code outside the image, from the state's
+   RAM. 15,912 instructions (stock 11,353); no new unsupported opcodes.
+7. **Plugin**: CMake uses `aot/build-st` when present (`-DMC_BUILD=build`
+   for stock). Run `aot/pgo.sh STATE build-st`, which trains on all 11
+   machines.
+
+### Behaviour, and how it was checked
+
+- **Three new peripheral reads**: eDMA channel 30's CSR (DONE), INTC0's
+  force register, and **DMA timer 0's counter, the governor's clock**.
+  - `engine.c` holds the timer still, so every block measures zero load.
+    The governor never fades voices to save CPU time (on hardware it does
+    above 82 %).
+  - At low load it still stops computing a voice that has stayed below
+    -108 dB for 64 blocks with no trig (inaudible), as on hardware.
+- **This OS runs a clock interrupt** (`0x40054c1e`, armed by `0x400559f0`)
+  that queues a type-5 event every ~31 blocks. The render frees type-5
+  events unread (jump table `0x40058da4`: types 3 and 5 share the "free"
+  case). The plugin's engine never runs that interrupt: no events, as in
+  stock.
+- **Unicorn, driven** (`scripts/driven.py --synth --between`, which
+  re-creates the clock events and SRAM writes; `Replay.by_address`):
+  195/200. The rest is the UI post: the RTOS pages, and `0xFC050014 |=
+  0x2000` on four blocks.
+- **AOT, replay** (`check_replay.py --ignore 43032000:43033000`, all five
+  Syntakt engines plus Kick): 300/300 bit-exact outside the bridge's
+  bookkeeping page.
+- **AOT, driven from MIDI like the plugin** (`check_driven.py --between
+  --ignore …`): 195/200, the same UI-post signature. The governor ran on
+  the frozen clock throughout without a sample of sound changing.
+
+### Plugin
+
+- Machine 0-10. Five new pixel icons: snare drum, clap burst, toy robot,
+  bit staircase, swarm of saws.
+- On the Syntakt machines the knobs relabel to the engine's own parameters
+  (Modded-Cycles' guide). The help text names them in full.
+- **LFO display**: the dot is gone. The window is one bar (of the tempo
+  when synced, of 120 BPM when free). The faster the LFO, the more cycles,
+  growing continuously from 1 to 64; each column draws the curve's range,
+  so dense LFOs read as a band.
+- The fresh-boot kit replaces the factory kit as the plugin's starting
+  sounds.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
@@ -748,6 +825,33 @@ Checks, all passing:
         wrote nothing to the kit when mapped: find where it lives);
    c. the per-track split for "Cycles voice" and "Cycles FX".
    d. (done, step 13) the "?" help button.
+   e. **LFO display: speed as a growing number of cycles** (Jack,
+      2026-10-22). The dot (step 14) disappears at high rates. Instead,
+      draw the window at a time span that shows more cycles as the speed
+      rises, seamlessly (continuous zoom, not steps), so the drawing itself
+      shows the speed in real time.
+   f. **UI: more Metal Gear Solid (PS1) Codec / scope influence** (Jack,
+      2026-10-22, two reference screenshots in chat):
+      - near-black screens with phosphor-green, scanlined panels;
+      - bevelled Codec frames with small grey label plates ("PTT",
+        "MEMORY");
+      - segmented signal-strength bars and a large seven-segment readout
+        ("140.85");
+      - thin green HUD rules and labels ("ZOOM LEVEL - 100 -", "ANGLE -5"),
+        left/right arrow buttons, the radar's angled green lines.
+      Candidates: the LFO display and value readouts as Codec screens, a
+      big frequency-style readout for tempo, signal bars for levels and
+      sends, HUD-style section titles.
+
+Future ideas (Jack, 2026-10-22): make it its own instrument rather than an
+Elektron copy, for future builds; not scheduled yet.
+- **Vector morphing**: take one sound and morph it into another, like a
+  vector synth (e.g. an XY pad between 2-4 stored sounds, interpolating
+  their parameters, or crossfading voices).
+- **New ways to tweak the FM**, outside Elektron's macro knobs.
+- **Polyphony** in the single-track "Cycles Voice" plugin (several engine
+  voices or instances), if it is too heavy for the six-track one.
+
 1. Sweep every CC over 0-127 (and note velocity 0, LFO destination) with
    `ccmap.py` so the clamps in `engine_inputs.py` are complete; read the
    pattern's per-track trig flags for all six tracks.

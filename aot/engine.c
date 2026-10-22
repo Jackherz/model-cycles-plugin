@@ -155,6 +155,14 @@ int mc_engine_render(mc_engine *g, float *left, float *right)
     mc_st32_raw(x, 0xfc04c010u, 0x80000000u);
     mc_st32_raw(x, 0xfc045640u, half);
     mc_st32_raw(x, 0xfc050014u, 0);
+    /* Read only by builds with Modded-Cycles' Syntakt engines (NOTES.md
+     * step 16): eDMA channel 30's CSR (DONE, as the eDMA leaves it), INTC0's
+     * force register, and DMA timer 0's counter. The timer is the load
+     * governor's clock: held still, every block measures zero load, so the
+     * governor never fades voices to save time the hardware does not have. */
+    mc_st16_raw(x, 0xfc0453deu, 0x0080);
+    mc_st32_raw(x, 0xfc048010u, 0);
+    mc_st32_raw(x, 0xfc07000cu, 0);
     mc_cpu cpu = g->tmpl;
     cpu.a[7] = RENDER_SP;
     x->mmio_count = 0;

@@ -37,9 +37,33 @@ int main(int argc, char** argv)
         juce::FileOutputStream os(f);
         juce::PNGImageFormat().writeImageToStream(img, os);
     }
+    // faster: more cycles in the bar (x16 at +40: 5 a bar), then the cap
+    for (auto [mult, speed, name] : {std::tuple{4, 104, "editor-lfo-5cycles.png"},
+                                     std::tuple{11, 127, "editor-lfo-fast.png"}})
+    {
+        set("t1_lfomult", (float)mult);
+        set("t1_lfospeed", (float)speed);
+        set("t1_lfofade", 64);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile(name);
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+
+    // a Syntakt engine: track 2 on SY Bits, its knobs relabelled
+    set("t2_machine", 9);
+    e->showPage(1);
+    {
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-sybits.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
 
     // the help mode, as if hovering over a few controls
-    const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"},
+    const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
     for (auto& h : help)
     {

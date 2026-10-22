@@ -30,7 +30,10 @@
 
 namespace cyclesemu
 {
-const juce::StringArray kMachineNames{"Kick", "Snare", "Metal", "Perc", "Tone", "Chord"};
+// 6-10: the Syntakt's digital engines, added by Modded-Cycles' tweak
+// syntakt-sd-cp-toy-bits-swarm (NOTES.md step 16)
+const juce::StringArray kMachineNames{"Kick", "Snare", "Metal", "Perc", "Tone", "Chord",
+                                      "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm"};
 // As the firmware draws them: triangle, sine, square, saw, ENV, ramp, random.
 const juce::StringArray kLfoWaveNames{"Triangle", "Sine", "Square", "Saw", "Env", "Ramp", "Random"};
 // Elektron's usual order; the Model:Cycles draws these as icons (unverified).
@@ -44,7 +47,7 @@ const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep",
 
 // Record offsets, CCs and clamps: NOTES.md and scripts/engine_inputs.py.
 const ParamDef kTrackParams[] = {
-    {"machine", "Machine", 0x26, 0, 5, 70, Kind::Sound, Show::Plain},
+    {"machine", "Machine", 0x26, 0, 10, 70, Kind::Sound, Show::Plain},
     {"pitch", "Pitch", 0x28, 40, 88, 65, Kind::Sound, Show::Semitones},
     {"decay", "Decay", 0x38, 0, 127, 80, Kind::Sound, Show::Plain},
     {"color", "Color", 0x2a, 0, 127, 16, Kind::Sound, Show::Plain},
@@ -319,8 +322,6 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         if (track < 0 || track >= kTracks)
             return;
         mc_engine_note(engine, track, note, m.isNoteOn() ? m.getVelocity() : 0, m.isNoteOn() ? 1 : 0, 0x0681);
-        if (m.isNoteOn())
-            trigBlock[track].store(engineBlocks.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return;
     }
     if (ch < 0 || ch >= kTracks || !m.isController())
@@ -382,7 +383,6 @@ bool CyclesEmuProcessor::isBusesLayoutSupported(const BusesLayout& layouts) cons
 
 void CyclesEmuProcessor::renderEngineBlock()
 {
-    engineBlocks.fetch_add(1, std::memory_order_relaxed);
     applyParameterChanges();
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {

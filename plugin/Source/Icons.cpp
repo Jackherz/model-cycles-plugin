@@ -20,7 +20,10 @@ Bits fromRows(const char* const rows[N])
 
 // Kick: rings (a membrane). Snare: scattered noise. Metal: nested squares.
 // Perc: a struck diamond. Tone: one sine cycle. Chord: stacked voices.
-const char* const kMachineRows[6][N] = {
+// The Syntakt engines: SD Vintage a snare drum, CP Vintage a clap's burst,
+// SY Toy a toy robot, SY Bits a bit-crushed staircase, SY Swarm three rows
+// of detuned saw teeth.
+const char* const kMachineRows[11][N] = {
     {"001111100", "010000010", "100111001", "101000101", "101010101", "101000101", "100111001", "010000010",
      "001111100"},
     {"100100010", "001001000", "010000101", "000100100", "101001001", "000010000", "100100101", "001000010",
@@ -33,6 +36,16 @@ const char* const kMachineRows[6][N] = {
      "000000000"},
     {"111111100", "000000000", "111110000", "000000000", "111111111", "000000000", "111100000", "000000000",
      "111111000"},
+    {"011111110", "100000001", "011111110", "010000010", "010101010", "010000010", "010101010", "011111110",
+     "000000000"},
+    {"100010001", "010010010", "001000100", "000000000", "111000111", "000000000", "001000100", "010010010",
+     "100010001"},
+    {"011111110", "100000001", "101101101", "100000001", "101111101", "100000001", "011111110", "001000100",
+     "011000110"},
+    {"000000000", "000000111", "000000100", "000011100", "000010000", "001110000", "001000000", "111000000",
+     "000000000"},
+    {"010010010", "110110110", "000000000", "001001001", "011011011", "000000000", "100100100", "101101101",
+     "000000000"},
 };
 // Sync: a crotchet (follows the tempo). Free: an infinity loop.
 const char* const kClockRows[2][N] = {
@@ -101,7 +114,7 @@ void drawIcon(juce::Graphics& g, IconSet set, int index, juce::Rectangle<int> ar
     Bits b{};
     switch (set)
     {
-        case IconSet::Machine: b = fromRows(kMachineRows[juce::jlimit(0, 5, index)]); break;
+        case IconSet::Machine: b = fromRows(kMachineRows[juce::jlimit(0, 10, index)]); break;
         case IconSet::Wave: b = waveBits(index); break;
         case IconSet::Trig: b = trigBits(index); break;
         case IconSet::Clock: b = fromRows(kClockRows[juce::jlimit(0, 1, index)]); break;

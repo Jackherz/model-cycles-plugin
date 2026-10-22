@@ -12,6 +12,7 @@ the render depends on (checked bit for bit by scripts/driven.py):
 Value clamping (pitch 40-88, machine 0-5, ...) is the firmware's; CLAMP holds
 what has been measured so far (scripts/ccmap.py).
 """
+import os
 import struct
 
 SETPARAM, SETLEVEL, SETMUTE, TRIG = 0x40059534, 0x40059594, 0x400594f0, 0x4005894a
@@ -23,7 +24,7 @@ SOUND_CC = {102: 0x16, 103: 0x18, 104: 0x1a, 106: 0x1e, 107: 0x20, 108: 0x22,
 FX_CC = {85: 0x12, 86: 0x14, 87: 0x16, 88: 0x18}
 LEVEL_CC = 95
 MUTE_CC = 94
-CLAMP = {65: (40, 88), 70: (0, 5), 66: (0, 1), 67: (0, 1), 103: (0, 23),
+CLAMP = {65: (40, 88), 70: (0, int(os.environ.get('CYCLES_MACHINES', 6)) - 1), 66: (0, 1), 67: (0, 1), 103: (0, 23),
          106: (0, 6), 108: (0, 4)}
 
 # Per-track trig flags from the pattern (FUN_4008171e reads them at

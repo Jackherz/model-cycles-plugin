@@ -22,21 +22,33 @@ FetchContent_Declare(juce
 FetchContent_MakeAvailable(juce)
 
 set(AOT ${CMAKE_CURRENT_SOURCE_DIR}/../aot)
-if(NOT EXISTS ${AOT}/build/render.c)
-    message(FATAL_ERROR "Run ../aot/build.sh first: ${AOT}/build/render.c is missing")
+# Which render: build-st (Model:Cycles with the Syntakt engines, NOTES.md
+# step 16) when it has been made, else build (stock 1.13). Its engine state
+# must match: ~/Library/Application Support/CyclesEmu/state.
+if(NOT DEFINED MC_BUILD)
+    if(EXISTS ${AOT}/build-st/render.c)
+        set(MC_BUILD build-st)
+    else()
+        set(MC_BUILD build)
+    endif()
 endif()
+set(MCB ${AOT}/${MC_BUILD})
+if(NOT EXISTS ${MCB}/render.c)
+    message(FATAL_ERROR "${MCB}/render.c is missing: run ../aot/build.sh (or translate.py --out)")
+endif()
+message(STATUS "Engine render: ${MCB}")
 
 # The engine: the generated render (big: one function, built once) and its runtime.
-add_library(mcengine STATIC ${AOT}/build/render.c ${AOT}/runtime.c ${AOT}/engine.c)
+add_library(mcengine STATIC ${MCB}/render.c ${AOT}/runtime.c ${AOT}/engine.c)
 target_include_directories(mcengine PUBLIC ${AOT})
 target_compile_options(mcengine PRIVATE -O2 -Wno-parentheses-equality)
 # profile-guided when ../aot/pgo.sh has made the profile (about -35% per block)
-if(EXISTS ${AOT}/build/render.profdata)
-    target_compile_options(mcengine PRIVATE -fprofile-instr-use=${AOT}/build/render.profdata
+if(EXISTS ${MCB}/render.profdata)
+    target_compile_options(mcengine PRIVATE -fprofile-instr-use=${MCB}/render.profdata
         -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date)
-    set_property(SOURCE ${AOT}/build/render.c APPEND PROPERTY OBJECT_DEPENDS ${AOT}/build/render.profdata)
+    set_property(SOURCE ${MCB}/render.c APPEND PROPERTY OBJECT_DEPENDS ${MCB}/render.profdata)
 else()
-    message(WARNING "No ${AOT}/build/render.profdata: run ../aot/pgo.sh for a faster engine")
+    message(WARNING "No ${MCB}/render.profdata: run ../aot/pgo.sh STATE ${MC_BUILD} for a faster engine")
 endif()
 set_target_properties(mcengine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

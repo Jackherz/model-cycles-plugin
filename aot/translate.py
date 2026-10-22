@@ -971,17 +971,24 @@ HANDLERS = {
 
 
 class Translator:
-    def __init__(self, img, table):
+    def __init__(self, img, table, extra=()):
+        # code is read from the image, then from `extra` (base, bytes)
+        # regions: code the firmware runs from RAM, e.g. a payload copied
+        # there at boot
         self.img, self.table = img, table
+        self.extra = list(extra)
         self.insns = {}            # addr -> Insn
         self.labels = set()
         self.unsupported = {}
 
     def read16(self, a):
         o = a - IMG_BASE
-        if not 0 <= o < len(self.img) - 1:
-            raise Unsupported('read outside the image at %08x' % a)
-        return struct.unpack_from('>H', self.img, o)[0]
+        if 0 <= o < len(self.img) - 1:
+            return struct.unpack_from('>H', self.img, o)[0]
+        for base, data in self.extra:
+            if 0 <= a - base < len(data) - 1:
+                return struct.unpack_from('>H', data, a - base)[0]
+        raise Unsupported('read outside the image at %08x' % a)
 
     def decode(self, pc):
         insn = self.read16(pc)
@@ -1149,18 +1156,47 @@ class Translator:
         return missing
 
 
+def state_regions(state_dir, lo, hi):
+    """-> the (base, bytes) regions of an engine state (dump_state.py's
+    regions.bin) that overlap [lo, hi)."""
+    out = []
+    with open(os.path.join(state_dir, 'regions.bin'), 'rb') as f:
+        while True:
+            head = f.read(8)
+            if len(head) < 8:
+                break
+            base, n = struct.unpack('<II', head)
+            data = f.read(n)
+            if base < hi and base + n > lo:
+                out.append((base, data))
+    return out
+
+
 def main():
-    img = open(os.path.join(P, 'data', 'sections', 'section_3_MAIN_OS.bin'), 'rb').read()
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('--sections', default=os.path.join(P, 'data', 'sections'))
+    ap.add_argument('--coverage', default=os.path.join(P, 'data', 'coverage.json'))
+    ap.add_argument('--out', default=os.path.join(P, 'aot', 'build', 'render.c'))
+    ap.add_argument('--state', help='an engine state (dump_state.py) to read code outside the image from')
+    ap.add_argument('--code', action='append', default=[], metavar='LO:HI',
+                    help='with --state: an address range of code that runs from RAM (hex)')
+    args = ap.parse_args()
+    img = open(os.path.join(args.sections, 'section_3_MAIN_OS.bin'), 'rb').read()
     table = json.load(open(os.path.join(P, 'aot', 'opcode_table.json')))
-    cov = json.load(open(os.path.join(P, 'data', 'coverage.json')))
+    cov = json.load(open(args.coverage))
     # the render's blocks, and the engine calls a host makes between blocks
     # (setparam, setlevel, setmute, trig: NOTES.md "The interface")
     engine = [0x40059534, 0x40059594, 0x400594f0, 0x4005894a]
     roots = sorted(set(int(k, 16) for k in cov['blocks']) | set(engine))
-    tr = Translator(img, table)
+    extra = []
+    for rng in args.code:
+        lo, hi = (int(x, 16) for x in rng.split(':'))
+        extra += state_regions(args.state, lo, hi)
+    tr = Translator(img, table, extra)
     tr.discover(roots)
-    os.makedirs(os.path.join(P, 'aot', 'build'), exist_ok=True)
-    path = os.path.join(P, 'aot', 'build', 'render.c')
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    path = args.out
     with open(path, 'w') as f:
         missing = tr.emit_c(f)
     print('%d instructions, %d labels, %d coverage roots -> %s'

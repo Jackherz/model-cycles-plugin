@@ -1,6 +1,8 @@
 // The text follows the Model:Cycles manual where it says something
 // (machines, Punch, Gate, FX). Its per-machine meaning of Color, Shape,
 // Sweep and Contour is not in the manual: those lines are approximate.
+// The Syntakt engines (machines 6-10) name their knobs after the Syntakt's
+// own parameters, as Modded-Cycles' guide maps them.
 // Write only characters the pixel font has (Retro.cpp): no quotes or
 // semicolons.
 #include "Help.h"
@@ -11,7 +13,18 @@ namespace cyclesemu
 {
 namespace
 {
-const char* kMachines[] = {"Kick", "Snare", "Metal", "Perc", "Tone", "Chord"};
+const char* kMachines[] = {"Kick", "Snare", "Metal", "Perc", "Tone", "Chord",
+                           "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm"};
+
+// The Syntakt engines: the parameter each knob is (color, shape, sweep,
+// contour, punch), from Modded-Cycles' guide.
+const char* kSyntaktKnobs[5][5] = {
+    {"Inharm", "Freq Complex", "Pitch Sweep", "Mod Envelope", "Punch"},
+    {"Body Char", "Balance", "Spacing Crunch", "Body Envelope", "Punch"},
+    {"Form", "Impact", "Bright", "Partial Decay", "Punch"},
+    {"Detune (40 to 88)", "Balance", "Rate Redux", "Waveform", "Bit Redux"},
+    {"Noise Mod", "Detune Anim", "Detune", "Osc Mix", "Sub-octave"},
+};
 
 // Per machine (Kick, Snare, Metal, Perc, Tone, Chord), roughly.
 const std::map<juce::String, std::array<const char*, 6>> kMacros = {
@@ -48,8 +61,9 @@ const std::map<juce::String, std::array<const char*, 6>> kMacros = {
 const std::map<juce::String, HelpText> kHelp = {
     {"machine",
      {"Machine",
-      "The sound engine for this track: Kick, Snare, Metal, Perc, Tone or Chord. All six are mappings of one FM "
-      "engine. Color, Shape, Sweep and Contour change meaning with the machine."}},
+      "The sound engine for this track. Kick, Snare, Metal, Perc, Tone and Chord are the Model:Cycles' own, six "
+      "mappings of one FM engine. SD Vintage, CP Vintage, SY Toy, SY Bits and SY Swarm are the Syntakt's digital "
+      "engines, running its own code. The knobs change meaning with the machine."}},
     {"pitch",
      {"Pitch", "Tuning in semitones around the programmed note. Notes you play transpose from here."}},
     {"decay", {"Decay", "How long the sound rings after each note. Low is a short blip, high a long ring."}},
@@ -120,9 +134,16 @@ HelpText helpFor(const juce::String& id, int machine)
     auto bare = id;
     if (id.startsWith("fx_") || (id.length() > 3 && id[0] == 't' && id[2] == '_'))
         bare = id.substring(3);
+    machine = juce::jlimit(0, 10, machine);
+    const char* knobs[] = {"color", "shape", "sweep", "contour", "punch"};
+    for (int k = 0; machine >= 6 && k < 5; ++k)
+        if (bare == knobs[k])
+            return {kSyntaktKnobs[machine - 6][k],
+                    "On the " + juce::String(kMachines[machine]) + " machine, the Syntakt engine of that name, "
+                    "this knob is the Syntakt's own " + kSyntaktKnobs[machine - 6][k] + " parameter" +
+                    (k == 4 ? juce::String(" (on or off).") : juce::String("."))};
     if (auto m = kMacros.find(bare); m != kMacros.end())
     {
-        machine = juce::jlimit(0, 5, machine);
         auto title = bare.substring(0, 1).toUpperCase() + bare.substring(1);
         return {title, "A macro: one knob that moves several FM settings at once. On the " +
                            juce::String(kMachines[machine]) + " machine it sets " + m->second[(size_t)machine] +

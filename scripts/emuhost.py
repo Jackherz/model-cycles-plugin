@@ -10,13 +10,26 @@ import time
 
 P = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIGIEMU = os.path.join(P, 're', 'digiemu')
-os.environ.setdefault('DT2_SYX', os.path.join(P, 'firmware', 'model-cycles_OS1.13.syx'))
-os.environ.setdefault('DT2_SECTIONS', os.path.join(P, 'data', 'sections'))
 sys.path.insert(0, DIGIEMU)
 sys.path.insert(0, os.path.join(DIGIEMU, 'tools'))
 
-SNAPSHOT = os.path.join(P, 'data', 'resume.snap')
-CARD = os.path.join(P, 'data', 'plusdrive.img')
+# CYCLES_FW=ROOT:SYX_NAME runs a firmware folder made by boot_firmware.py
+# (its settled gui.snap, card, sections and devices overlay) instead of the
+# stock 1.13 in data/: e.g. CYCLES_FW=data-st:model-cycles_OS1.13_syntakt5.syx
+if os.environ.get('CYCLES_FW'):
+    from emu import bootstrap
+    _root, _syx = os.environ['CYCLES_FW'].split(':')
+    _paths = bootstrap.FirmwarePaths(os.path.join(P, _root), _syx, os.path.join(DIGIEMU, 'devices'))
+    os.environ.update(_paths.env())
+    SNAPSHOT = _paths.resume if os.path.exists(_paths.resume) else _paths.gui
+    CARD = _paths.card
+    DATA = _paths.root
+else:
+    os.environ.setdefault('DT2_SYX', os.path.join(P, 'firmware', 'model-cycles_OS1.13.syx'))
+    os.environ.setdefault('DT2_SECTIONS', os.path.join(P, 'data', 'sections'))
+    SNAPSHOT = os.path.join(P, 'data', 'resume.snap')
+    CARD = os.path.join(P, 'data', 'plusdrive.img')
+    DATA = os.path.join(P, 'data')
 RENDER_ISR = 0x40058c5e     # forced-interrupt block handler (NOTES.md)
 
 

@@ -8,7 +8,8 @@
  * BENCH_MODE=mix instead rotates every machine through every track (a new
  * one every 2 s) with the macros, LFO and sends moving: the training run
  * for profile-guided builds (aot/pgo.sh), so no machine's code is cold.
- * BENCH_MODE=kit plays the loaded kit unchanged.
+ * BENCH_MODE=kit plays the loaded kit unchanged. BENCH_MACHINES (default 6)
+ * is how many machines the build has: 11 with the Syntakt engines.
  */
 #include <mach/mach_time.h>
 #include <stdio.h>
@@ -54,6 +55,7 @@ int main(int argc, char **argv)
     if (!g) { fprintf(stderr, "load failed %d\n", st); return 1; }
     const char *mode = getenv("BENCH_MODE");
     int mix = mode && !strcmp(mode, "mix"), kit = mode && !strcmp(mode, "kit");
+    int machines = getenv("BENCH_MACHINES") ? atoi(getenv("BENCH_MACHINES")) : 6;
     for (int t = 0; t < 6 && !kit; t++) {
         mc_engine_param(g, t, 0x26, 5);       /* machine: Chord */
         mc_engine_param(g, t, 0x38, 127);     /* decay */
@@ -70,7 +72,7 @@ int main(int argc, char **argv)
         if (mix && b % 3000 == 0)          /* every 2 s: next machine, new macros and LFO */
             for (int t = 0; t < 6; t++) {
                 int k = (int)(b / 3000);
-                mc_engine_param(g, t, 0x26, (t + k) % 6);
+                mc_engine_param(g, t, 0x26, (t + k) % machines);
                 mc_engine_param(g, t, 0x38, 40 + (k * 37 + t * 11) % 88);
                 for (int m = 0; m < 4; m++)   /* color, shape, sweep, contour */
                     mc_engine_param(g, t, 0x2a + 2 * m, (k * 29 + t * 17 + m * 41) % 128);

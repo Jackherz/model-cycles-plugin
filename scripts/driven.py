@@ -29,7 +29,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from replay import Replay, Mismatch, PAGE, DMA_REGIONS  # noqa: E402
-from unicorn.m68k_const import UC_M68K_REG_A7  # noqa: E402
+from unicorn.m68k_const import UC_M68K_REG_D0, UC_M68K_REG_A7  # noqa: E402
 
 SCRATCH = 0x30000000        # unmapped in the firmware's map: our stack and blocks
 SCRATCH_SIZE = 0x10000
@@ -41,13 +41,15 @@ SYNTH_FRAME = bytes.fromhex('42fc2608') + (0x40058a08).to_bytes(4, 'big')  # SR 
 RING_HALVES = (0x4a3ed080, 0x4a3ed180)  # TCD50 SADDR: the half the DMA is playing
 
 
-def synth_read(addr, size, k, phase):
+def synth_read(addr, size, k, phase, recorded):
     if addr == 0xfc04c010:              # INTC1 INTFRCH: the render's own force bit
         return 0x80000000
     if addr == 0xfc045640:              # TCD50 SADDR: alternates every block
         return RING_HALVES[(k + phase) & 1]
     if addr == 0xfc0453de:              # TCD30 CSR: DONE
         return 0x80
+    if addr == 0xfc07000c:              # DTIM0 counter: Modded-Cycles' load governor's
+        return recorded                 # clock (data-st), as digiemu's timer ran
     return 0
 
 
@@ -73,6 +75,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('capture')
     ap.add_argument('--keep-going', action='store_true')
+    ap.add_argument('--between', action='store_true',
+                    help='also apply what the firmware did between blocks that the engine API does not: '
+                         'its SRAM writes and sequencer-timed events (to account for a capture fully)')
     ap.add_argument('--synth', action='store_true',
                     help='generate the context, stack frame, ISR words and peripheral '
                          'values instead of using the recorded ones (what a plugin does)')
@@ -88,6 +93,7 @@ def main():
         from unicorn.m68k_const import UC_M68K_REG_A7 as A7
         r.uc.context_restore(pickle.loads(calls[0]['ctx']))
         r.uc.reg_write(A7, SYNTH_SP)
+        r.by_address = args.between
         synth_ctx = pickle.dumps(r.uc.context_save())
         phase = next(i for i in (0, 1) if any(
             (a, v) == (0xfc045640, RING_HALVES[i]) for a, _, v in calls[0]['mmio_r']))
@@ -107,10 +113,24 @@ def main():
             if a[0] == 'kitw':
                 _, addr, size, value = a
                 r.uc.mem_write(addr, value.to_bytes(size, 'big'))
+            elif a[0] == 'sramw':
+                if args.between:
+                    _, addr, size, value, _pc = a
+                    r.uc.mem_write(addr, value.to_bytes(size, 'big'))
             elif a[0] == 'call':
                 _, name, func, fargs, blk = a
-                if name == 'queue_timed':
+                if name == 'queue_timed' and not args.between:
                     raise SystemExit('call %d: a sequencer-timed event; capture with --stop' % k)
+                if name == 'queue_timed':
+                    # The firmware's clock ISR (0x40054c1e) allocates the
+                    # event (pool 0x40091eb6), types it 5, then queues it;
+                    # the capture saw only the queueing. The render frees
+                    # type-5 events unread (jump table 0x40058da4).
+                    call_firmware(r.uc, 0x40091eb6, [])
+                    ev = r.uc.reg_read(UC_M68K_REG_D0)
+                    if ev != fargs[0]:
+                        raise SystemExit('call %d: pool gave %08x, digiemu %08x' % (k, ev, fargs[0]))
+                    r.uc.mem_write(ev, (5).to_bytes(4, 'big'))
                 call_firmware(r.uc, func, fargs, blk)
         c_rec = c
         if args.synth:
@@ -118,7 +138,7 @@ def main():
             r.uc.mem_write(ISR_WORDS, isr)
             r.uc.mem_write(SYNTH_SP, SYNTH_FRAME)
             c = dict(c, ctx=synth_ctx, ret=0x40058a08,
-                     mmio_r=[(a, sz, synth_read(a, sz, k, phase)) for a, sz, _ in c['mmio_r']])
+                     mmio_r=[(a, sz, synth_read(a, sz, k, phase, v)) for a, sz, v in c['mmio_r']])
         else:
             r.uc.mem_write(ISR_WORDS, c['isr'])
             r.uc.mem_write(c['sp'], c['frame'])
