@@ -22,6 +22,7 @@ enum class Kind
     LfoMult,    // with LfoSync: the firmware's multiplier 0-23 (x1..x2k synced, 1..2k free)
     LfoSync,
     LfoDest,    // index into kLfoDestValues
+    Solo,       // the mixer's solo (the plugin's, not the firmware's)
 };
 
 // How the editor and the host show its value.
@@ -107,6 +108,9 @@ public:
     }
     // the output's peak over the last callback (0..), for the editor's meter
     float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
+    // a track's peak since the last call (0..1), before its level: for the mixer's meters
+    float takeTrackPeak(int t) { return trackPeaks[t].exchange(0.0f, std::memory_order_relaxed); }
+    bool trackAudible(int t) const { return levelSent[t] != 0; }
 
 private:
     struct Slot
@@ -141,6 +145,17 @@ private:
     std::atomic<float>* voiceCount = nullptr;
     void voiceNote(int note, int velocity, bool on);
     void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
+    // Mute and Solo as on a mixer: the firmware's mute only stops sequencer
+    // trigs, so a track that should be silent (muted, or soloed out) has its
+    // engine level held at 0, and its level is restored when it should play
+    // again (audio thread only)
+    int levelNow[cyclesemu::kTracks] = {100, 100, 100, 100, 100, 100};
+    bool mutedNow[cyclesemu::kTracks] = {}, soloNow[cyclesemu::kTracks] = {};
+    int levelSent[cyclesemu::kTracks] = {-1, -1, -1, -1, -1, -1};
+    void applyMix();
+    // per-track peaks since the editor last looked, from the render's track
+    // buffers (before level and pan)
+    std::atomic<float> trackPeaks[cyclesemu::kTracks] = {};
     juce::String engineError;
     std::vector<Slot> slots;
     juce::AudioProcessorValueTreeState apvts;

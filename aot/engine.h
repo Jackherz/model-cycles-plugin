@@ -31,6 +31,7 @@ int mc_engine_get_mute(mc_engine *g, int track);
 /* for checks and tests: the kit's address, and a byte of guest memory */
 uint32_t mc_engine_kit(mc_engine *g);
 int mc_engine_peek(mc_engine *g, uint32_t addr);
+void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n);
 
 #ifdef __cplusplus
 }

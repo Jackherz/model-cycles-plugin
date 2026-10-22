@@ -70,7 +70,10 @@ const std::map<juce::String, HelpText> kHelp = {
     {"punch", {"Punch", "Adds a fixed pseudo-compression and distortion, for a harder hit."}},
     {"gate",
      {"Gate", "Gate mode: the sound lasts as long as the note is held, instead of playing out its full decay."}},
-    {"mute", {"Mute", "Silences this track."}},
+    {"mute", {"Mute", "Silences this track, as a mixer mute: a ringing note goes quiet, and comes back on unmute."}},
+    {"solo",
+     {"Solo", "Plays only the soloed tracks: while any track is soloed, the others are silent. Solo several to "
+              "hear them together."}},
     {"voldist",
      {"Volume + Distortion", "Turns the track up, and drives it into distortion as you go higher."}},
     {"pan", {"Pan", "Position in the stereo field. C is centre, L64 hard left, R63 hard right."}},

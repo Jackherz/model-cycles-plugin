@@ -27,7 +27,7 @@ private:
 class ParamControl : public juce::Component
 {
 public:
-    enum class Style { Knob, Choice, Toggle, Icons };
+    enum class Style { Knob, Choice, Toggle, Icons, Switch };   // Switch: a toggle drawn as a lit plate
     ParamControl(juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& label, Style,
                  cyclesemu::IconSet icons = cyclesemu::IconSet::Machine);
     void resized() override;
@@ -220,6 +220,26 @@ public:
 private:
     juce::Rectangle<int> itemArea(int i) const;
     int open = -1;
+};
+
+// The mixer: a strip per track, with a Codec meter (the track's own signal,
+// before its level; dimmed while it is silenced), Level, Pan, the two sends,
+// Mute and Solo. The knobs are the track pages' own parameters.
+class MixerPage : public juce::Component, private juce::Timer
+{
+public:
+    explicit MixerPage(CyclesEmuProcessor&);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    juce::Rectangle<int> strip(int t) const;
+    juce::Rectangle<int> meter(int t) const;
+
+    CyclesEmuProcessor& proc;
+    std::vector<std::unique_ptr<ParamControl>> controls;   // per strip: level, pan, delay, reverb, mute, solo
+    float shown[cyclesemu::kTracks] = {};
 };
 
 class CyclesEmuEditor : public juce::AudioProcessorEditor, private juce::Timer

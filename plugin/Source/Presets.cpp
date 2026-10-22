@@ -6,7 +6,11 @@ namespace cyclesemu
 namespace
 {
 // a track preset leaves the mix alone: level and mute belong to the kit
-bool inTrackPreset(const char* id) { return juce::String(id) != "level" && juce::String(id) != "mute"; }
+bool inTrackPreset(const char* id)
+{
+    const juce::String s(id);
+    return s != "level" && s != "mute" && s != "solo";
+}
 
 void putParams(juce::AudioProcessorValueTreeState& st, juce::ValueTree& tree, int track, bool all)
 {

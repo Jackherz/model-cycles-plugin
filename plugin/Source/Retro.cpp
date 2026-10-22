@@ -699,6 +699,8 @@ void Look::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area
 
 void Look::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bool)
 {
+    if (b.getProperties()["switch"])   // a plate: grey off, lit Codec on
+        return labelPlate(g, b.getLocalBounds().reduced(3, 4), b.getButtonText(), b.getToggleState());
     auto r = b.getLocalBounds();
     auto box = juce::Rectangle<int>(r.getX() + 2, r.getCentreY() - 8, 16, 16);
     g.setColour(kField);

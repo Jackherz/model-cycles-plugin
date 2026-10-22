@@ -10,8 +10,8 @@ int main(int argc, char** argv)
     CyclesEmuProcessor proc;
     std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
     auto* e = dynamic_cast<CyclesEmuEditor*>(ed.get());
-    const char* names[] = {"track1", "track2", "track3", "track4", "track5", "track6", "fx"};
-    for (int i = 0; i < 7; ++i)
+    const char* names[] = {"track1", "track2", "track3", "track4", "track5", "track6", "mix", "fx"};
+    for (int i = 0; i < 8; ++i)
     {
         e->showPage(i);
         auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
@@ -94,11 +94,12 @@ int main(int argc, char** argv)
         for (int i = 0; i < kNumTrackParams; ++i)
         {
             juce::String id = kTrackParams[i].id;
-            if (id != "level" && id != "mute" && plain(paramId(0, id.toRawUTF8())) != plain(paramId(3, id.toRawUTF8())))
+            if (id != "level" && id != "mute" && id != "solo"
+                && plain(paramId(0, id.toRawUTF8())) != plain(paramId(3, id.toRawUTF8())))
                 ++diff;
         }
         std::printf("track preset round trip: %d of %d parameters differ; level kept: %s\n", diff,
-                    kNumTrackParams - 2, plain(paramId(3, "level")) == level4 ? "yes" : "NO");
+                    kNumTrackParams - 3, plain(paramId(3, "level")) == level4 ? "yes" : "NO");
         auto kitFile = tmp.withFileExtension("cykit");
         writeTree(kitToTree(st), kitFile);
         std::vector<int> before;
@@ -258,6 +259,95 @@ int main(int argc, char** argv)
     }
     retro::applyTheme(0);
 
+    // mute: a note on track 1 with Mute off, Mute on before the note, and Mute
+    // switched on while it sounds
+    {
+        auto play = [&](int mute) {   // 0 off, 1 on before, 2 on after the note
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 110);
+            cyclesemu::setPlain(f.state(), "t1_mute", mute == 1 ? 1.0f : 0.0f);
+            f.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            double e = 0;
+            for (int b = 0; b < 375 + 300; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 375)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                if (mute >= 2 && b == 400)
+                    cyclesemu::setPlain(f.state(), "t1_mute", 1.0f);
+                if (mute == 3 && b == 410)   // and back
+                    cyclesemu::setPlain(f.state(), "t1_mute", 0.0f);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b >= 420)
+                    for (int i = 0; i < 128; ++i)
+                        e += (double)buf.getSample(0, i) * buf.getSample(0, i);
+            }
+            return std::sqrt(e / (255 * 128.0));
+        };
+        const double off = play(0), before = play(1), during = play(2), back = play(3);
+        // solo: track 2 soloed silences track 1; track 1 soloed too plays it
+        auto soloed = [&](bool alsoOne) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 110);
+            cyclesemu::setPlain(f.state(), "t2_solo", 1);
+            cyclesemu::setPlain(f.state(), "t1_solo", alsoOne ? 1.0f : 0.0f);
+            f.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            double e = 0;
+            for (int b = 0; b < 675; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 375)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b >= 420)
+                    for (int i = 0; i < 128; ++i)
+                        e += (double)buf.getSample(0, i) * buf.getSample(0, i);
+            }
+            return std::sqrt(e / (255 * 128.0));
+        };
+        // the mixer's meters: a note on track 3 shows on track 3 only
+        {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            f.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            for (int b = 0; b < 400; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 375)
+                    midi.addEvent(juce::MidiMessage::noteOn(3, 60, (juce::uint8)110), 0);
+                if (b == 374)
+                    for (int t = 0; t < 6; ++t)
+                        f.takeTrackPeak(t);   // forget the start
+                buf.clear();
+                f.processBlock(buf, midi);
+            }
+            float pk[6];
+            bool ok = true;
+            for (int t = 0; t < 6; ++t)
+            {
+                pk[t] = f.takeTrackPeak(t);
+                ok &= t == 2 ? pk[t] > 0.01f : pk[t] < 1e-6f;
+            }
+            std::printf("meters after a note on track 3: %.3f %.3f %.3f %.3f %.3f %.3f -> %s\n", pk[0], pk[1], pk[2],
+                        pk[3], pk[4], pk[5], ok ? "PASS" : "FAIL");
+        }
+        const double other = soloed(false), both = soloed(true);
+        std::printf("solo: track 1 with track 2 soloed %.4f, with both soloed %.4f -> %s\n", other, both,
+                    other < off * 0.001 && std::abs(both / off - 1.0) < 0.05 ? "PASS" : "FAIL");
+        std::printf("mute: off %.4f, on before the note %.4f, on while it sounds %.4f, on and off again %.4f -> %s\n",
+                    off, before, during, back,
+                    before < off * 0.001 && during < off * 0.01 && std::abs(back / off - 1.0) < 0.05 ? "PASS" : "FAIL");
+    }
+
     // CyclesVoice in steady state: settings first, a second of silence, then
     // the notes; the level over the 0.8 s after them. One note, the same note
     // on three voices, a chord. (Notes right after a machine change catch the
@@ -331,7 +421,7 @@ int main(int argc, char** argv)
 
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
-                             {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
+                             {"7", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
     for (auto& h : help)
     {
         e->showPage(juce::String(h[0]).getIntValue());

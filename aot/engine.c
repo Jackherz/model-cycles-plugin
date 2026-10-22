@@ -229,3 +229,5 @@ int mc_engine_peek(mc_engine *g, uint32_t addr)
     mc_mem_read(g->x, addr, &b, 1);
     return b;
 }
+
+void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n) { mc_mem_read(g->x, addr, dst, n); }

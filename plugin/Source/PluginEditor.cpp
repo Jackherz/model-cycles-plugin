@@ -57,6 +57,9 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
             addAndMakeVisible(box);
             boxAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, id, box);
             break;
+        case Style::Switch:
+            toggle.getProperties().set("switch", true);
+            [[fallthrough]];
         case Style::Toggle:
             toggle.setButtonText(label);
             addAndMakeVisible(toggle);
@@ -119,6 +122,9 @@ void ParamControl::resized()
             break;
         case Style::Toggle:
             toggle.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 24));
+            break;
+        case Style::Switch:
+            toggle.setBounds(r);
             break;
         case Style::Icons:
         {
@@ -696,6 +702,95 @@ void FxPage::resized()
     noteArea = r.withTrimmedTop(24).removeFromTop(48).reduced(12, 0);
 }
 
+MixerPage::MixerPage(CyclesEmuProcessor& p) : proc(p)
+{
+    using S = ParamControl::Style;
+    auto& st = p.state();
+    for (int t = 0; t < kTracks; ++t)
+        for (auto [id, label, style] : {std::tuple{"level", "Level", S::Knob}, std::tuple{"pan", "Pan", S::Knob},
+                                        std::tuple{"delaysend", "Delay", S::Knob}, std::tuple{"reverbsend", "Reverb", S::Knob},
+                                        std::tuple{"mute", "Mute", S::Switch}, std::tuple{"solo", "Solo", S::Switch}})
+        {
+            controls.push_back(std::make_unique<ParamControl>(st, paramId(t, id), label, style));
+            setAccent(*controls.back(), kAccents[t]);
+            addAndMakeVisible(*controls.back());
+        }
+    startTimerHz(24);
+}
+
+juce::Rectangle<int> MixerPage::strip(int t) const
+{
+    const int w = getWidth() / kTracks;
+    return {t * w, 0, w, getHeight()};
+}
+
+juce::Rectangle<int> MixerPage::meter(int t) const
+{
+    return strip(t).reduced(10, 0).withTrimmedTop(26).withHeight(96);
+}
+
+void MixerPage::resized()
+{
+    for (int t = 0; t < kTracks; ++t)
+    {
+        auto r = strip(t).reduced(4, 0).withTrimmedTop(26 + 96 + 6);
+        auto toggles = r.removeFromBottom(30);
+        const int kh = r.getHeight() / 4;
+        for (int k = 0; k < 4; ++k)
+            controls[(size_t)(t * 6 + k)]->setBounds(r.removeFromTop(kh));
+        controls[(size_t)(t * 6 + 4)]->setBounds(toggles.removeFromLeft(toggles.getWidth() / 2));
+        controls[(size_t)(t * 6 + 5)]->setBounds(toggles);
+    }
+}
+
+void MixerPage::timerCallback()
+{
+    if (!isShowing())
+        return;
+    for (int t = 0; t < kTracks; ++t)   // fast up, slow down, like the Codec's bars
+    {
+        const float p = proc.takeTrackPeak(t);
+        shown[t] = p > shown[t] ? p : shown[t] * 0.85f;
+    }
+    repaint();
+}
+
+void MixerPage::paint(juce::Graphics& g)
+{
+    for (int t = 0; t < kTracks; ++t)
+    {
+        auto s = strip(t);
+        // the strip's name, with its colour chip; a groove between strips
+        auto head = s.withHeight(20).reduced(10, 0);
+        g.setColour(kAccents[t]);
+        g.fillRect(head.getX(), head.getY() + 5, 8, 8);
+        drawText(g, "Track " + juce::String(t + 1), head.withTrimmedLeft(14), juce::Justification::centredLeft, kText);
+        if (t > 0)
+        {
+            g.setColour(kShadow);
+            g.fillRect(s.getX(), s.getY() + 4, 1, s.getHeight() - 8);
+            g.setColour(kLight);
+            g.fillRect(s.getX() + 1, s.getY() + 4, 1, s.getHeight() - 8);
+        }
+        // the meter: a Codec screen of segments, -48..0 dB, bottom up
+        auto in = codecScreen(g, meter(t));
+        const bool audible = proc.trackAudible(t);
+        const float db = juce::Decibels::gainToDecibels(shown[t], -48.0f);
+        const int segs = 12, lit = juce::roundToInt((db + 48.0f) / 48.0f * segs);
+        auto bars = in.reduced(8, 6);
+        const int sh = bars.getHeight() / segs;
+        for (int i = 0; i < segs; ++i)
+        {
+            const bool on = i < lit;
+            g.setColour(on ? (audible ? kPhosphor : kPhosphorDim) : kPhosphorFaint);
+            g.fillRect(bars.getX(), bars.getBottom() - (i + 1) * sh + 1, bars.getWidth(), sh - 2);
+        }
+        if (!audible)   // silenced: say why the meter is dim
+            drawText(g, "Off", in.withTrimmedTop(2).withHeight(14), juce::Justification::centred, kPhosphor);
+        scanlines(g, in);
+    }
+}
+
 juce::Rectangle<int> MenuStrip::itemArea(int i) const
 {
     int x = 4;
@@ -935,27 +1030,30 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     status.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(status);
 
+    // the tabs: a page per track (one in CyclesVoice), the mixer (CyclesEmu),
+    // and the FX
     const int nT = proc.trackPages();
-    for (int i = 0; i <= nT; ++i)
-    {
-        auto* b = tabs.add(new juce::TextButton(i < nT ? (proc.isVoice() ? juce::String("Voice") : "Track " + juce::String(i + 1))
-                                                       : juce::String("FX")));
+    auto addPage = [&](const juce::String& name, juce::Colour accent, juce::Component* page) {
+        const int index = pages.size();
+        auto* b = tabs.add(new juce::TextButton(name));
         b->setClickingTogglesState(true);
         b->setRadioGroupId(1);
         b->getProperties().set("tab", true);
-        setAccent(*b, kAccents[i < nT ? i : 6]);
-        b->onClick = [this, i] { showPage(i); };
-        if (i < nT)
-        {
-            auto* tp = new TrackPage(p, i);
-            tp->beforeChange = [this](const juce::String& what) { remember(what); };
-            pages.add(tp);
-        }
-        else
-            pages.add(new FxPage(st));
-        setAccent(*pages.getLast(), kAccents[i < nT ? i : 6]);
-        addChildComponent(pages.getLast());
+        setAccent(*b, accent);
+        b->onClick = [this, index] { showPage(index); };
+        pages.add(page);
+        setAccent(*page, accent);
+        addChildComponent(page);
+    };
+    for (int i = 0; i < nT; ++i)
+    {
+        auto* tp = new TrackPage(p, i);
+        tp->beforeChange = [this](const juce::String& what) { remember(what); };
+        addPage(proc.isVoice() ? juce::String("Voice") : "Track " + juce::String(i + 1), kAccents[i], tp);
     }
+    if (!proc.isVoice())
+        addPage("Mix", kAccents[6], new MixerPage(p));
+    addPage("FX", kAccents[6], new FxPage(st));
     // tabs above the panel's edge, so the selected one opens into it
     for (auto* b : tabs)
         addAndMakeVisible(b);
@@ -1046,7 +1144,7 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     sunken(g, sb.withTrimmedRight(2), false);
     sunken(g, right, false);
     const bool onTrack = current < proc.trackPages();
-    juce::String where = !onTrack ? juce::String("Send FX")
+    juce::String where = !onTrack ? juce::String(dynamic_cast<MixerPage*>(pages[current]) ? "Mixer" : "Send FX")
                          : proc.isVoice() ? juce::String(juce::roundToInt(proc.state().getRawParameterValue("voices")->load())) + " voices"
                                           : "Track " + juce::String(current + 1) + " of 6";
     g.setColour(kAccents[onTrack ? current : 6]);
@@ -1077,8 +1175,9 @@ void CyclesEmuEditor::resized()
     // left of the three caption boxes (3 x 18 + 2 px gap, 3 px margin)
     helpButton.setBounds(kTitle.getRight() - 3 - 56 - 22, kTitle.getY() + 3, 18, 16);
     auto bar = kTabs;
+    const int tw = juce::jmin(120, bar.getWidth() / juce::jmax(1, tabs.size()));
     for (auto* b : tabs)
-        b->setBounds(bar.removeFromLeft(120).withTrimmedRight(-1).withHeight(26));
+        b->setBounds(bar.removeFromLeft(tw).withTrimmedRight(-1).withHeight(26));
     for (auto* p : pages)
         p->setBounds(kPanel.reduced(10, 12));
 }

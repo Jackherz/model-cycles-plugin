@@ -1063,6 +1063,37 @@ Next: **CyclesFX**, the send effect. Find where the render sums the sends
 (the mixer `0x400567ba`) and add a hook to the translator, so the host's
 audio can be added there mid-render.
 
+## Step 24: Mute that mutes, Solo, and a mixer page (2026-10-23)
+
+- **Mute did nothing to the sound.** The firmware's mute
+  (`FUN_400594f0`, the mask at `0x40a700c0`+0x14) only stops the
+  sequencer playing a track's trigs: notes from MIDI still sound, and the
+  plugin has no sequencer. The firmware matching checks passed because
+  that is the firmware's behaviour.
+- Mute and the new **Solo** now work as on a mixer:
+  - `applyMix()` sets each track's engine level to its Level, or to 0 while
+    the track is muted or another track is soloed and it is not.
+  - The firmware mute mask is still set too.
+  - Only changes reach the engine, and the firmware's level smoothing makes
+    the switch click-free.
+  - Solo is a plugin parameter per track (`Kind::Solo`), left out of track
+    presets like Level and Mute.
+- **MIX tab** (CyclesEmu, between Track 6 and FX): six strips. Each has the
+  track's chip and name; a Codec meter of 12 segments (-48..0 dB, fast up,
+  slow down); Level, Pan, Delay and Reverb; and Mute and Solo as switch
+  plates (`ParamControl::Style::Switch`: grey, lit Codec when on).
+  - The meter is the track's own signal, before its level: the render's
+    per-track buffers at `0x80001858 + 128 t` (32 big-endian Q31 samples),
+    read after every engine block (`mc_engine_read`). It dims, with "Off",
+    while the track is silenced.
+  - Tabs now share the bar's width (8 in CyclesEmu).
+- Checked in EditorShot:
+  - Mute before a note: silence. Mute while it rings: 0.0001 after
+    smoothing. Mute and unmute: level back.
+  - Track 2 soloed silences track 1; both soloed play it at full level.
+  - A note on track 3 shows on track 3's meter only.
+  - Host tests (6) and auval (Cyem, Cyvo) pass.
+
 ## Next steps
 
 

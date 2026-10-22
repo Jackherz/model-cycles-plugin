@@ -66,6 +66,7 @@ const ParamDef kTrackParams[] = {
     {"reverbsend", "Reverb Send", 0x3e, 0, 127, 13, Kind::Sound, Show::Plain},
     {"level", "Level", 0, 0, 127, 95, Kind::Level, Show::Plain},
     {"mute", "Mute", 0, 0, 1, 94, Kind::Mute, Show::Plain},
+    {"solo", "Solo", 0, 0, 1, -1, Kind::Solo, Show::Plain},
     {"lfowave", "LFO Waveform", 0x1e, 0, 6, 106, Kind::Sound, Show::Plain},
     {"lfosync", "LFO Sync", 0x18, 0, 1, -1, Kind::LfoSync, Show::Plain},
     {"lfomult", "LFO Multiplier", 0x18, 0, 11, 103, Kind::LfoMult, Show::Plain},
@@ -202,6 +203,13 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
         s.lastParam = v;
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
     }
+    for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the mixer's starting point
+    {
+        levelNow[t] = levelSent[t] = mc_engine_get_level(engine, t);
+        mutedNow[t] = mc_engine_get_mute(engine, t) != 0;
+    }
+    if (engine != nullptr)
+        applyMix();
     if (engine != nullptr && isVoice())   // and one sound on every voice from the start
         for (auto& s : slots)
             applyAll(*s.def, s.track, s.lastParam);
@@ -246,7 +254,8 @@ void CyclesEmuProcessor::resetTrack(int t)
                     if (kLfoDestValues[j] == k[4])
                         setPlain(apvts, id, (float)j);
                 break;
-            case Kind::Mute: setPlain(apvts, id, 0.0f); break;
+            case Kind::Mute:
+            case Kind::Solo: setPlain(apvts, id, 0.0f); break;
             case Kind::Level:   // the level a new kit gives this track
                 for (auto tr : initKit)
                     if (tr.hasType("Track") && (int)tr.getProperty("index") == t)
@@ -315,6 +324,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
     {
         case Kind::Level: return mc_engine_get_level(engine, s.track);
         case Kind::Mute: return mc_engine_get_mute(engine, s.track);
+        case Kind::Solo: return 0;
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
@@ -335,6 +345,24 @@ int CyclesEmuProcessor::paramValue(int track, const char* id) const
         if (s.track == track && !std::strcmp(s.def->id, id))
             return juce::roundToInt(s.param->convertFrom0to1(s.param->getValue()));
     return 0;
+}
+
+// Each track's engine level: its Level, or 0 while muted or while another
+// track is soloed and it is not. Only changes reach the engine.
+void CyclesEmuProcessor::applyMix()
+{
+    bool anySolo = false;
+    for (bool s : soloNow)
+        anySolo |= s;
+    for (int t = 0; t < kTracks; ++t)
+    {
+        const int want = mutedNow[t] || (anySolo && !soloNow[t]) ? 0 : levelNow[t];
+        if (want != levelSent[t])
+        {
+            mc_engine_level(engine, t, want);
+            levelSent[t] = want;
+        }
+    }
 }
 
 void CyclesEmuProcessor::applyAll(const ParamDef& d, int track, int v)
@@ -391,8 +419,19 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
     {
         case Kind::Sound: mc_engine_param(engine, track, d.offset, v); break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
-        case Kind::Level: mc_engine_level(engine, track, v); break;
-        case Kind::Mute: mc_engine_mute(engine, track, v != 0); break;
+        case Kind::Level:
+            levelNow[track] = v;
+            applyMix();
+            break;
+        case Kind::Mute:
+            mutedNow[track] = v != 0;
+            mc_engine_mute(engine, track, v != 0);
+            applyMix();
+            break;
+        case Kind::Solo:
+            soloNow[track] = v != 0;
+            applyMix();
+            break;
         case Kind::LfoMult:
         case Kind::LfoSync: applyLfoMult(track); break;
         case Kind::LfoDest: mc_engine_param(engine, track, 0x1c, kLfoDestValues[v]); break;
@@ -514,7 +553,30 @@ void CyclesEmuProcessor::renderEngineBlock()
         mc_engine_set_tempo(engine, targetBpm);
         appliedBpm = targetBpm;
     }
-    if (mc_engine_render(engine, blockL, blockR) != 0)
+    const int renderStatus = mc_engine_render(engine, blockL, blockR);
+    // the mixer's meters: each track's peak in the render's own track
+    // buffers (SRAM 0x80001858 + 128 t: 32 big-endian Q31 samples, after
+    // Vol+Dist, before level and pan)
+    {
+        uint8_t raw[kTracks * 128];
+        mc_engine_read(engine, 0x80001858u, raw, sizeof raw);
+        for (int t = 0; t < kTracks; ++t)
+        {
+            int32_t peak = 0;
+            for (int i = 0; i < 32; ++i)
+            {
+                const uint8_t* b = raw + 128 * t + 4 * i;
+                const int32_t s = (int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]);
+                peak = std::max(peak, s == INT32_MIN ? INT32_MAX : std::abs(s));
+            }
+            const float p = (float)peak / 2147483648.0f;
+            float prev = trackPeaks[t].load(std::memory_order_relaxed);
+            while (p > prev && !trackPeaks[t].compare_exchange_weak(prev, p, std::memory_order_relaxed))
+            {
+            }
+        }
+    }
+    if (renderStatus != 0)
     {
         std::fill(std::begin(blockL), std::end(blockL), 0.0f);
         std::fill(std::begin(blockR), std::end(blockR), 0.0f);
