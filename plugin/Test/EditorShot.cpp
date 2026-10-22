@@ -259,6 +259,44 @@ int main(int argc, char** argv)
     }
     retro::applyTheme(0);
 
+    // musical delay times: names at note lengths, typed names parse, other
+    // values plain numbers; the snap points cover them
+    {
+        auto* p = proc.state().getParameter("fx_delaytime");
+        auto text = [&](int v) { return p->getText(p->convertTo0to1((float)v), 16); };
+        const int typed = juce::roundToInt(p->convertFrom0to1(p->getValueForText("1/4.")));
+        const bool ok = text(16) == "1/8" && text(24) == "1/8." && text(32) == "1/4" && text(30) == "30"
+                        && typed == 48 && cyclesemu::snapPoints("delaytime").size() == 12
+                        && cyclesemu::snapPoints("decay").empty();
+        std::printf("delay time names: 16=%s 24=%s 32=%s 30=%s, \"1/4.\" types %d -> %s\n", text(16).toRawUTF8(),
+                    text(24).toRawUTF8(), text(32).toRawUTF8(), text(30).toRawUTF8(), typed, ok ? "PASS" : "FAIL");
+    }
+
+    // hardware defaults: after Reset Track, every parameter sits at its
+    // default (what double-click and the host's reset go to); and each
+    // parameter reports that default to the host
+    {
+        using namespace cyclesemu;
+        CyclesEmuProcessor f(Product::Full);
+        juce::Random rng(3);
+        setPlain(f.state(), "t3_machine", 7);
+        for (auto s : {RandomSection::Sound, RandomSection::Lfo, RandomSection::Filter})
+            randomise(f.state(), 2, s, rng, false);
+        f.resetTrack(2);
+        int bad = 0, hostBad = 0, n = 0;
+        for (int i = 0; i < kNumTrackParams; ++i)
+        {
+            const auto id = paramId(2, kTrackParams[i].id);
+            auto* p = f.state().getParameter(id);
+            const float d = f.defaultFor(id), now = p->convertFrom0to1(p->getValue());
+            bad += d < 0 || juce::roundToInt(d) != juce::roundToInt(now);
+            hostBad += std::abs(p->getDefaultValue() - p->convertTo0to1(d)) > 1e-6f;
+            ++n;
+        }
+        std::printf("hardware defaults: %d of %d parameters off their default after Reset Track; %d report "
+                    "another to the host -> %s\n", bad, n, hostBad, bad == 0 && hostBad == 0 ? "PASS" : "FAIL");
+    }
+
     // mute: a note on track 1 with Mute off, Mute on before the note, and Mute
     // switched on while it sounds
     {
@@ -384,6 +422,17 @@ int main(int argc, char** argv)
         std::printf("voice, steady: one %.4f, same note x3 %.4f (x%.2f), chord %.4f (single notes' energies: %.4f), "
                     "chord at 1 voice %.4f -> %s\n",
                     one, three, three / one, chord, sum, mono, ok ? "PASS" : "FAIL");
+    }
+
+    // CyclesFX's editor
+    {
+        CyclesEmuProcessor fx(Product::Fx);
+        std::unique_ptr<juce::AudioProcessorEditor> fe(fx.createEditor());
+        auto img = fe->createComponentSnapshot(fe->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("fx-plugin.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
     }
 
     // CyclesVoice's editor: the voice page and its FX page

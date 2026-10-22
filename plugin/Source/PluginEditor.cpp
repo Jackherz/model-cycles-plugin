@@ -46,6 +46,22 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
         case Style::Knob:
             addAndMakeVisible(caption);
             knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+            {
+                const auto bare = id.startsWith("fx_") || (id.length() > 3 && id[0] == 't' && id[2] == '_')
+                                      ? id.substring(3) : id;
+                if (!cyclesemu::snapPoints(bare).empty())
+                    knob.snaps = &cyclesemu::snapPoints(bare);
+            }
+            knob.onDoubleClick = [&st, id, p] {
+                // the hardware's default (the processor knows the kit and the
+                // machine), else the parameter's own
+                float v = -1.0f;
+                if (auto* proc = dynamic_cast<CyclesEmuProcessor*>(&st.processor))
+                    v = proc->defaultFor(id);
+                if (v < 0.0f)
+                    v = p->convertFrom0to1(p->getDefaultValue());
+                cyclesemu::setPlain(st, id, v);
+            };
             knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 84, 20);
             addAndMakeVisible(knob);
             knobAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, id, knob);
@@ -158,7 +174,7 @@ void Section::resized()
     r.removeFromTop(16);
     if (rows.empty())
         return;
-    size_t cols = 4;
+    size_t cols = (size_t)minColumns;
     for (auto& row : rows)
         cols = std::max(cols, row.controls.size());
     int cellW = r.getWidth() / (int)cols;
@@ -675,6 +691,18 @@ FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
     auto* tn = mk("reverbtone", "Tone");
     delay.addRow({dt, fb});
     reverb.addRow({sz, tn});
+    delay.minColumns = reverb.minColumns = 2;
+    input.minColumns = 3;
+    if (st.getParameter("fxdelay") != nullptr)   // CyclesFX
+    {
+        hasInput = true;
+        auto mkGlobal = [&](const char* id, const juce::String& label) {
+            controls.push_back(std::make_unique<ParamControl>(st, id, label, S::Knob));
+            return controls.back().get();
+        };
+        input.addRow({mkGlobal("fxdelay", "Delay"), mkGlobal("fxreverb", "Reverb"), mkGlobal("fxmix", "Mix")});
+        addAndMakeVisible(input);
+    }
 }
 
 void FxPage::paint(juce::Graphics& g)
@@ -697,6 +725,8 @@ void FxPage::resized()
 {
     auto r = getLocalBounds();
     auto top = r.removeFromTop(190);
+    if (hasInput)   // the input's sends and Mix first, then the two effects
+        input.setBounds(top.removeFromLeft(top.getWidth() * 36 / 100).withTrimmedRight(6));
     delay.setBounds(top.removeFromLeft(top.getWidth() / 2).withTrimmedRight(6));
     reverb.setBounds(top.withTrimmedLeft(6));
     noteArea = r.withTrimmedTop(24).removeFromTop(48).reduced(12, 0);
@@ -1010,6 +1040,9 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     };
     if (proc.isVoice())
         g("voices", "Voices", S::Knob);
+    else if (proc.isFx())
+    {
+    }
     else
     {
         g("midimode", "MIDI Mode", S::Choice);
@@ -1017,7 +1050,9 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     }
     g("outgain", "Output", S::Knob);
     addAndMakeVisible(codecTempo);   // tempo and host tempo
-    if (proc.isVoice())   // one sound: no kit, and the sound's own menu
+    if (proc.isFx())   // the effect: nothing to load per track
+        menuBar.menus = {{"View", [this] { return viewMenu(); }}, {"Help", [this] { return helpMenu(); }}};
+    else if (proc.isVoice())   // one sound: no kit, and the sound's own menu
         menuBar.menus = {{"Voice", [this] { return trackMenu(); }},
                          {"View", [this] { return viewMenu(); }},
                          {"Help", [this] { return helpMenu(); }}};
@@ -1051,7 +1086,7 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         tp->beforeChange = [this](const juce::String& what) { remember(what); };
         addPage(proc.isVoice() ? juce::String("Voice") : "Track " + juce::String(i + 1), kAccents[i], tp);
     }
-    if (!proc.isVoice())
+    if (!proc.isVoice() && !proc.isFx())
         addPage("Mix", kAccents[6], new MixerPage(p));
     addPage("FX", kAccents[6], new FxPage(st));
     // tabs above the panel's edge, so the selected one opens into it
@@ -1100,8 +1135,8 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
         g.setColour(kAccents[i]);
         g.fillRect(kTitle.getX() + 4 + (i % 2) * 7, kTitle.getY() + 4 + (i / 2) * 7, 6, 6);
     }
-    drawText(g, proc.isVoice() ? "CyclesVoice.exe" : "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4,
-             kTitleText);
+    drawText(g, proc.isFx() ? "CyclesFX.exe" : proc.isVoice() ? "CyclesVoice.exe" : "CyclesEmu.exe",
+             kTitle.getX() + 24, kTitle.getY() + 4, kTitleText);
     auto caps = kTitle.withTrimmedRight(3).withSizeKeepingCentre(kTitle.getWidth() - 6, 16);
     const char* glyph[] = {"x", "[", "_"};   // decorative; the "?" left of them is helpButton
     for (int i = 0; i < 3; ++i)
@@ -1132,7 +1167,8 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
         drawText(g, word.substring(i, i + 1), x + 3, logo.getY() + 3, kDark, 4);
         drawText(g, word.substring(i, i + 1), x, logo.getY(), kAccents[i % 4], 4);
     }
-    drawText(g, proc.isVoice() ? "Voice  v1.0" : "Emu  v1.0", logo.getX() + 2, logo.getY() + 40, kText);
+    drawText(g, proc.isFx() ? "FX  v1.0" : proc.isVoice() ? "Voice  v1.0" : "Emu  v1.0", logo.getX() + 2,
+             logo.getY() + 40, kText);
     drawText(g, "Model:Cycles", logo.getX() + 2, logo.getY() + 58, kDimText);
 
     // the page panel, and the status bar
@@ -1156,7 +1192,12 @@ void CyclesEmuEditor::resized()
 {
     auto top = kToolbar.withTrimmedTop(20).reduced(12, 6);
     top.removeFromLeft(kLogoW);
-    if (proc.isVoice())
+    if (proc.isFx())
+    {
+        globals[0]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
+        top.removeFromLeft(230);
+    }
+    else if (proc.isVoice())
     {
         top.removeFromLeft(120);
         globals[0]->setBounds(top.removeFromLeft(110).reduced(4, 0));   // voices

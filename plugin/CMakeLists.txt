@@ -98,6 +98,28 @@ target_link_libraries(CyclesVoice
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 
+# CyclesFX: the same sources as an audio effect: the host's audio into the
+# engine's delay and reverb sends (Product::Fx; the render's --hook points).
+juce_add_plugin(CyclesFX
+    COMPANY_NAME "Personal"
+    BUNDLE_ID "personal.cyclesfx"
+    PLUGIN_MANUFACTURER_CODE Pers
+    PLUGIN_CODE Cyfx
+    FORMATS AU VST3 Standalone
+    PRODUCT_NAME "CyclesFX"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE)
+target_sources(CyclesFX PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_compile_definitions(CyclesFX PUBLIC
+    CYCLES_PRODUCT=2 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0)
+target_link_libraries(CyclesFX
+    PRIVATE mcengine juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
+           juce::juce_recommended_warning_flags)
+
 # Host the built VST3 like a DAW: identity with the engine, callback timings.
 juce_add_console_app(CyclesEmuHostTest PRODUCT_NAME "CyclesEmuHostTest")
 target_sources(CyclesEmuHostTest PRIVATE Test/HostTest.cpp)

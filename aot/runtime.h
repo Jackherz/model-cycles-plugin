@@ -49,6 +49,11 @@ typedef struct mc_ctx {
     uint32_t bail_pc;             /* target of an MC_UNKNOWN_TARGET */
     uint32_t edma_transfers, edma_refused;
     uint8_t *dma_buf;             /* eDMA staging, allocated with the context */
+    /* Called at the instructions translate.py was given with --hook, before
+     * they run, when set: the host's way in mid-render (CyclesFX adds its
+     * input to the send buses there). NULL costs one branch per hook point. */
+    void (*hook)(struct mc_ctx *, uint32_t pc);
+    void *hook_user;
 } mc_ctx;
 
 /* ---- memory --------------------------------------------------------- */

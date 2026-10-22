@@ -389,6 +389,86 @@ int voiceTest(juce::AudioPluginFormatManager& fm, const juce::String& path)
     return ok ? 0 : 1;
 }
 
+// CyclesFX at a host rate:
+//  silence: sends at 0, a tone in: nothing out (the engine's tracks are silent);
+//  echo: a click into the delay only (feedback 0, reverb send 0): its echo comes back;
+//  dry: Mix 0, a band-limited noise in: the output is the input, delayed by
+//       exactly the reported latency (cross-correlation's best lag);
+//  load: noise in, both sends, Mix 100.
+int fxTest(juce::AudioPluginFormatManager& fm, const juce::String& path, double rate)
+{
+    auto run = [&](float dsend, float rsend, float mix, float fb, const std::vector<float>& in, int* latency,
+                   double* usMean) {
+        std::vector<float> out(in.size());
+        auto p = load(fm, path, rate, 128);
+        if (!p)
+            return out;
+        setParam(*p, "Delay Send", dsend / 127.0f);
+        setParam(*p, "Reverb Send", rsend / 127.0f);
+        setParam(*p, "Mix", mix / 100.0f);
+        setParam(*p, "Delay Feedback", fb / 127.0f);
+        p->prepareToPlay(rate, 128);
+        if (latency)
+            *latency = p->getLatencySamples();
+        juce::AudioBuffer<float> buf(2, 128);
+        juce::MidiBuffer midi;
+        double us = 0;
+        int blocks = 0;
+        for (size_t pos = 0; pos + 128 <= in.size(); pos += 128, ++blocks)
+        {
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom(c, 0, in.data() + pos, 128);
+            auto t0 = std::chrono::steady_clock::now();
+            p->processBlock(buf, midi);
+            us += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+            std::copy(buf.getReadPointer(0), buf.getReadPointer(0) + 128, out.begin() + (long)pos);
+        }
+        if (usMean)
+            *usMean = us / juce::jmax(1, blocks);
+        return out;
+    };
+    const int n = (int)(rate * 3);
+    juce::Random rng(7);
+    std::vector<float> tone((size_t)n), click((size_t)n, 0.0f), noise((size_t)n);
+    for (int i = 0; i < n; ++i)
+        tone[(size_t)i] = 0.3f * (float)std::sin(2 * M_PI * 440.0 * i / rate);
+    click[(size_t)(rate * 0.2)] = 0.9f;
+    float lp = 0;   // noise, gently low-passed (well inside both resamplers' band)
+    for (int i = 0; i < n; ++i)
+        noise[(size_t)i] = lp += 0.25f * ((rng.nextFloat() * 2 - 1) * 0.5f - lp);
+    auto rms = [](const std::vector<float>& v, size_t from) {
+        double e = 0;
+        for (size_t i = from; i < v.size(); ++i)
+            e += (double)v[i] * v[i];
+        return std::sqrt(e / (double)(v.size() - from));
+    };
+    const double silent = rms(run(0, 0, 100, 0, tone, nullptr, nullptr), (size_t)rate);
+    const auto echo = run(127, 0, 100, 0, click, nullptr, nullptr);
+    double echoPeak = 0;
+    for (float v : echo)
+        echoPeak = std::max(echoPeak, (double)std::abs(v));
+    int latency = 0;
+    const auto dry = run(0, 0, 0, 0, noise, &latency, nullptr);
+    int best = 0;
+    double bc = -1;
+    for (int lag = 0; lag < 2000; ++lag)
+    {
+        double s = 0;
+        for (int i = n / 3; i < n / 3 + 20000; ++i)
+            s += (double)noise[(size_t)i] * dry[(size_t)(i + lag)];
+        if (s > bc)
+            bc = s, best = lag;
+    }
+    double us = 0;
+    run(100, 100, 100, 60, noise, nullptr, &us);
+    const double budget = 1e6 * 128 / rate;
+    const bool ok = silent < 1e-5 && echoPeak > 0.01 && std::abs(best - latency) <= 1;
+    std::printf("fx at %.1f kHz: sends 0 -> rms %.2g; a click into the delay -> echo peak %.3f; Mix 0 -> the input "
+                "after %d samples (latency reported %d); load %.1f us per callback (%.1f%%) -> %s\n",
+                rate / 1000, silent, echoPeak, best, latency, us, 100 * us / budget, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -406,6 +486,8 @@ int main(int argc, char** argv)
     rc |= tempo(fm, path);
     rc |= resampled(fm, path);
     rc |= voiceTest(fm, path.replace("CyclesEmu.vst3", "CyclesVoice.vst3"));
+    rc |= fxTest(fm, path.replace("CyclesEmu.vst3", "CyclesFX.vst3"), 48000);
+    rc |= fxTest(fm, path.replace("CyclesEmu.vst3", "CyclesFX.vst3"), 44100);
     rc |= load_test(fm, path, 48000, outDir.getChildFile("hosttest-48k.wav"));
     rc |= load_test(fm, path, 44100, outDir.getChildFile("hosttest-44k1.wav"));
     return rc;

@@ -32,6 +32,11 @@ int mc_engine_get_mute(mc_engine *g, int track);
 uint32_t mc_engine_kit(mc_engine *g);
 int mc_engine_peek(mc_engine *g, uint32_t addr);
 void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n);
+/* CyclesFX: from the next mc_engine_render on, add 32 frames of input (the
+ * buffers are read during each render; refill them between renders) to the
+ * delay send and the reverb send, times the two amounts (0..1). l = NULL
+ * stops it. Needs a render translated with --hook 4005698c --hook 40056a1c. */
+void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend);
 
 #ifdef __cplusplus
 }

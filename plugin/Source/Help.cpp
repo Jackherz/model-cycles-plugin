@@ -98,7 +98,10 @@ const std::map<juce::String, HelpText> kHelp = {
       "Multiplies the LFO rate, from 1 to 2k. Speed and Multiplier together set how fast it runs."}},
     {"lfodest",
      {"LFO Destination", "The parameter the LFO moves: any of this track's sound settings, or Off."}},
-    {"lfospeed", {"LFO Speed", "The LFO rate. Negative values run the waveform backwards."}},
+    {"lfospeed",
+     {"LFO Speed",
+      "The LFO rate. Negative values run the waveform backwards. The knob snaps to the even rates (8, 16, 32, "
+      "48, 63 either way) that divide into bars with the multiplier; hold Alt to turn freely."}},
     {"lfodepth",
      {"LFO Depth", "How far the LFO moves its destination. Negative values turn the waveform upside down."}},
     {"lfofade",
@@ -124,7 +127,9 @@ const std::map<juce::String, HelpText> kHelp = {
       "often off, the filter usually off or moderate. The machine, level and mute stay. Shift-click: a "
       "variation, nudging the current values instead. Track and Kit menus: save, load, copy and paste."}},
     {"delaytime",
-     {"Delay Time", "The delay time, synced to tempo: 32 is one beat, 64 two beats."}},
+     {"Delay Time",
+      "The delay time, synced to tempo: 32 is one beat. Note lengths show by name (1/16, 1/8., 1/4...) and the "
+      "knob snaps to them as you turn it; hold Alt to turn freely."}},
     {"delayfeedback",
      {"Delay Feedback", "How much of the delay feeds back into itself. High values repeat for a long time."}},
     {"reverbsize",
@@ -136,6 +141,12 @@ const std::map<juce::String, HelpText> kHelp = {
      {"MIDI Mode",
       "Drum Map: on any channel, C1 to F1 play tracks 1 to 6, and notes from C3 up play the Key Trk track. "
       "Ch 1-6: MIDI channels 1 to 6 play tracks 1 to 6, as on the hardware."}},
+    {"fxdelay", {"Delay Send", "How much of the input goes into the delay. Its return also feeds the reverb."}},
+    {"fxreverb", {"Reverb Send", "How much of the input goes into the reverb."}},
+    {"fxmix",
+     {"Mix",
+      "The balance of the dry input and the effects. 100 (the default) is effects only, for a send/return "
+      "channel; lower it to use CyclesFX as an insert."}},
     {"voices",
      {"Voices",
       "CyclesVoice plays one sound on the six engine tracks as six voices. This sets how many it uses: 1 is "

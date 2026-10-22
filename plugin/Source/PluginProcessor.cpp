@@ -86,12 +86,32 @@ const ParamDef kTrackParams[] = {
 const int kNumTrackParams = (int)(sizeof kTrackParams / sizeof kTrackParams[0]);
 
 const ParamDef kFxParams[] = {
-    {"delaytime", "Delay Time", 0x12, 0, 127, 85, Kind::Fx, Show::Plain},
+    {"delaytime", "Delay Time", 0x12, 0, 127, 85, Kind::Fx, Show::NoteLength},
     {"delayfeedback", "Delay Feedback", 0x14, 0, 127, 86, Kind::Fx, Show::Plain},
     {"reverbsize", "Reverb Size", 0x16, 0, 127, 87, Kind::Fx, Show::Plain},
     {"reverbtone", "Reverb Tone", 0x18, 0, 127, 88, Kind::Fx, Show::Plain},
 };
 const int kNumFxParams = (int)(sizeof kFxParams / sizeof kFxParams[0]);
+
+// The delay time is tempo-synced, 32 to the beat: straight and dotted note
+// lengths fall on whole values.
+const std::pair<int, const char*> kNoteLengths[] = {{2, "1/64"},  {4, "1/32"},  {6, "1/32."}, {8, "1/16"},
+                                                     {12, "1/16."}, {16, "1/8"},  {24, "1/8."},  {32, "1/4"},
+                                                     {48, "1/4."}, {64, "1/2"},  {96, "1/2."}, {127, "1 BAR"}};
+
+const std::vector<int>& snapPoints(const juce::String& bare)
+{
+    static const std::vector<int> none, delay = [] {
+        std::vector<int> v;
+        for (auto [at, name] : kNoteLengths)
+            v.push_back(at);
+        return v;
+    }();
+    // LFO speed (64 = stopped): even rates either way, which divide with
+    // the multipliers (16 x4 = a cycle every 2 bars, 32 x4 = every bar)
+    static const std::vector<int> speed{1, 16, 32, 48, 56, 60, 64, 68, 72, 80, 96, 112, 127};
+    return bare == "delaytime" ? delay : bare == "lfospeed" ? speed : none;
+}
 
 juce::String paramId(int track, const char* id)
 {
@@ -122,6 +142,13 @@ const juce::StringArray* choicesFor(const char* id)
 
 juce::String showValue(Show s, int v)
 {
+    if (s == Show::NoteLength)
+    {
+        for (auto [at, name] : kNoteLengths)
+            if (v == at)
+                return name;
+        return juce::String(v);
+    }
     switch (s)
     {
         case Show::Bipolar: return (v > 64 ? "+" : "") + juce::String(v - 64);
@@ -135,6 +162,10 @@ juce::String showValue(Show s, int v)
 int parseValue(Show s, const juce::String& t)
 {
     auto x = t.trim();
+    if (s == Show::NoteLength)
+        for (auto [at, name] : kNoteLengths)
+            if (x.equalsIgnoreCase(name))
+                return at;
     switch (s)
     {
         case Show::Bipolar:
@@ -148,19 +179,35 @@ int parseValue(Show s, const juce::String& t)
     }
 }
 
+// The three parameter kinds, with their default asked of the processor when
+// the host (or a reset) wants it: the hardware's, which depends on the kit
+// and the machine, known only once the engine is loaded.
+using DefaultFn = std::function<float()>;
+template <typename Base> struct HardwareDefault : Base
+{
+    template <typename... Args> HardwareDefault(DefaultFn f, Args&&... args) : Base(std::forward<Args>(args)...), def(std::move(f)) {}
+    float getDefaultValue() const override   // else the range's start, as declared
+    {
+        const float v = def ? def() : -1.0f;
+        return v >= 0.0f ? this->convertTo0to1(v) : 0.0f;
+    }
+    DefaultFn def;
+};
+
 std::unique_ptr<juce::RangedAudioParameter> makeParam(const ParamDef& d, const juce::String& id,
-                                                      const juce::String& name)
+                                                      const juce::String& name, DefaultFn def)
 {
     if (auto* names = choicesFor(d.id))
-        return std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name, *names, 0);
+        return std::make_unique<HardwareDefault<juce::AudioParameterChoice>>(def, juce::ParameterID{id, 1}, name,
+                                                                             *names, 0);
     if (d.kind == Kind::LfoSync)
-        return std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name,
-                                                            juce::StringArray{"Sync", "Free"}, 0);
+        return std::make_unique<HardwareDefault<juce::AudioParameterChoice>>(
+            def, juce::ParameterID{id, 1}, name, juce::StringArray{"Sync", "Free"}, 0);
     if (d.hi == 1)
-        return std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, false);
+        return std::make_unique<HardwareDefault<juce::AudioParameterBool>>(def, juce::ParameterID{id, 1}, name, false);
     const Show show = d.show;
-    return std::make_unique<juce::AudioParameterInt>(
-        juce::ParameterID{id, 1}, name, d.lo, d.hi, d.lo,
+    return std::make_unique<HardwareDefault<juce::AudioParameterInt>>(
+        def, juce::ParameterID{id, 1}, name, d.lo, d.hi, d.lo,
         juce::AudioParameterIntAttributes()
             .withStringFromValueFunction([show](int v, int) { return showValue(show, v); })
             .withValueFromStringFunction([show](const juce::String& t) { return parseValue(show, t); }));
@@ -170,9 +217,14 @@ std::unique_ptr<juce::RangedAudioParameter> makeParam(const ParamDef& d, const j
 
 using namespace cyclesemu;
 
+juce::AudioProcessor::BusesProperties CyclesEmuProcessor::busesFor(Product p)
+{
+    auto b = BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true);
+    return p == Product::Fx ? b.withInput("Input", juce::AudioChannelSet::stereo(), true) : b;
+}
+
 CyclesEmuProcessor::CyclesEmuProcessor(Product p)
-    : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      product(p), apvts(*this, nullptr, "params", makeLayout())
+    : AudioProcessor(busesFor(p)), product(p), apvts(*this, nullptr, "params", makeLayout())
 {
     int err = 0;
     engine = mc_engine_new(stateDir().getFullPathName().toRawUTF8(), &err);
@@ -182,6 +234,9 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     midiMode = apvts.getRawParameterValue("midimode");     // CyclesEmu only
     keysTrack = apvts.getRawParameterValue("keystrack");
     voiceCount = apvts.getRawParameterValue("voices");     // CyclesVoice only
+    fxDelaySend = apvts.getRawParameterValue("fxdelay");   // CyclesFX only
+    fxReverbSend = apvts.getRawParameterValue("fxreverb");
+    fxMix = apvts.getRawParameterValue("fxmix");
     outGain = apvts.getRawParameterValue("outgain");
     tempoParam = apvts.getRawParameterValue("tempo");
     followHost = apvts.getRawParameterValue("followhost");
@@ -268,6 +323,59 @@ void CyclesEmuProcessor::resetTrack(int t)
 
 void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
 
+float CyclesEmuProcessor::defaultFor(const juce::String& id) const
+{
+    if (engine == nullptr || !initKit.isValid())
+        return -1.0f;   // not loaded yet: the declared default
+    // which track (6 = FX) and which parameter
+    int t = -1;
+    juce::String bare = id;
+    if (id.startsWith("fx_"))
+        t = kTracks, bare = id.substring(3);
+    else if (id.length() > 3 && id[0] == 't' && id[2] == '_')
+        t = id[1] - '1', bare = id.substring(3);
+    if (t < 0)
+        return -1.0f;
+    // the new kit's value: the FX, and a track's level
+    auto fromKit = [&]() -> float {
+        for (auto tr : initKit)
+            if ((t == kTracks && tr.hasType("FX")) || (tr.hasType("Track") && (int)tr.getProperty("index") == t))
+                return tr.hasProperty(juce::Identifier(bare)) ? (float)tr.getProperty(juce::Identifier(bare)) : -1.0f;
+        return -1.0f;
+    };
+    if (t == kTracks || bare == "level")
+        return fromKit();
+    if (bare == "mute" || bare == "solo")
+        return 0.0f;
+    if (!haveInitSounds)
+        return fromKit();
+    // the init sound of the track's current machine
+    const auto* mp = apvts.getParameter(paramId(t, "machine"));
+    const int m = mp ? juce::jlimit(0, 10, juce::roundToInt(mp->convertFrom0to1(mp->getValue()))) : 0;
+    const int* k = initSound[m];
+    for (int i = 0; i < kNumTrackParams; ++i)
+        if (bare == kTrackParams[i].id)
+        {
+            const auto& d = kTrackParams[i];
+            switch (d.kind)
+            {
+                case Kind::Sound: return (float)(d.offset == 0x26 ? m : k[(d.offset - 0x14) / 2]);   // machine: stays
+                case Kind::LfoSync: return k[2] >= 12 ? 1.0f : 0.0f;
+                case Kind::LfoMult: return (float)(k[2] % 12);
+                case Kind::LfoDest:
+                    for (int j = 0; j < kNumLfoDests; ++j)
+                        if (kLfoDestValues[j] == k[4])
+                            return (float)j;
+                    return 0.0f;
+                case Kind::Level:
+                case Kind::Mute:
+                case Kind::Solo:
+                case Kind::Fx: break;
+            }
+        }
+    return -1.0f;
+}
+
 CyclesEmuProcessor::~CyclesEmuProcessor() { mc_engine_free(engine); }
 
 juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayout()
@@ -283,13 +391,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayo
         {
             const auto& d = kTrackParams[i];
             juce::String id = paramId(t, d.id);
-            group->addChild(makeParam(d, id, isVoice() ? juce::String(d.name) : "T" + juce::String(t + 1) + " " + d.name));
+            group->addChild(makeParam(d, id, isVoice() ? juce::String(d.name) : "T" + juce::String(t + 1) + " " + d.name,
+                                      [this, id] { return defaultFor(id); }));
             slots.push_back({id, &d, t});
         }
         layout.add(std::move(group));
     }
     if (isVoice())
         layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"voices", 1}, "Voices", 1, kTracks, kTracks));
+    else if (isFx())
+    {
+        // how much of the input each effect gets, and the dry/wet balance
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"fxdelay", 1}, "Delay Send", 0, 127, 80));
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"fxreverb", 1}, "Reverb Send", 0, 127, 80));
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"fxmix", 1}, "Mix", 0, 100, 100,
+                                                             juce::AudioParameterIntAttributes().withLabel("%")));
+    }
     else
     {
         layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -311,7 +428,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayo
     {
         const auto& d = kFxParams[i];
         juce::String id = paramId(kTracks, d.id);
-        fx->addChild(makeParam(d, id, d.name));
+        fx->addChild(makeParam(d, id, d.name, [this, id] { return defaultFor(id); }));
         slots.push_back({id, &d, kTracks});
     }
     layout.add(std::move(fx));
@@ -538,11 +655,118 @@ void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     carry.ensureSize(4096);
     blockPos = kBlock;
     setLatencySamples(resample ? juce::roundToInt(Resampler::latency() / ratio) : 0);
+    if (isFx())
+    {
+        std::fill(std::begin(inCollectL), std::end(inCollectL), 0.0f);
+        std::fill(std::begin(inCollectR), std::end(inCollectR), 0.0f);
+        std::fill(std::begin(blockL), std::end(blockL), 0.0f);
+        std::fill(std::begin(blockR), std::end(blockR), 0.0f);
+        if (!resample)
+            setLatencySamples(kBlock);   // a block in, a block out
+        else
+        {
+            // Both sides start with silence: the output (48 kHz) enough for its
+            // resampler's lookahead, the input (host rate) enough that a 48 kHz
+            // block can always be made when the output asks, so neither ever
+            // runs dry and the timing is fixed.
+            inResampler.prepare(sampleRate, 48000.0);
+            const int outAhead = Resampler::kTaps + 2 * kBlock, inAhead = Resampler::kTaps + 4 * kBlock;
+            srcL.assign((size_t)outAhead, 0.0f);
+            srcR.assign((size_t)outAhead, 0.0f);
+            inFifoL.assign((size_t)inAhead, 0.0f);
+            inFifoR.assign((size_t)inAhead, 0.0f);
+            inFifoL.reserve(room * 2 + (size_t)inAhead);
+            inFifoR.reserve(room * 2 + (size_t)inAhead);
+            // Host output k reads 48 kHz output k*48k/rate + D, which is engine
+            // output (that - outAhead), made from the same 48 kHz input frame
+            // (a block's input is its own here), which the input resampler made
+            // from host input (that)*rate/48k + D - inAhead: the latency is
+            // inAhead - D + (outAhead - D)*rate/48k.
+            const double d = Resampler::latency();
+            setLatencySamples(juce::roundToInt(inAhead - d + (outAhead - d) / ratio));
+        }
+    }
 }
 
 bool CyclesEmuProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+    return !isFx() || layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo();
+}
+
+// CyclesFX, one engine block: 32 input frames into the sends, 32 out, with
+// the dry input (as long delayed) mixed in by Mix.
+void CyclesEmuProcessor::fxEngineBlock(const float* inL, const float* inR, float* outL, float* outR)
+{
+    // the send knobs' law: square, so the knob's middle is about -12 dB
+    auto amount = [](std::atomic<float>* p) {
+        const float v = juce::jlimit(0.0f, 127.0f, p->load()) / 127.0f;
+        return v * v;
+    };
+    std::copy(inL, inL + kBlock, inBlockL);
+    std::copy(inR, inR + kBlock, inBlockR);
+    mc_engine_set_input(engine, inBlockL, inBlockR, amount(fxDelaySend), amount(fxReverbSend));
+    renderEngineBlock();   // into blockL/R (the wet), DC blocker and output gain included
+    const float wet = juce::jlimit(0.0f, 100.0f, fxMix->load()) / 100.0f, dry = 1.0f - wet;
+    for (int i = 0; i < kBlock; ++i)
+    {
+        outL[i] = wet * blockL[i] + dry * inBlockL[i];
+        outR[i] = wet * blockR[i] + dry * inBlockR[i];
+    }
+}
+
+// CyclesFX: at 48 kHz, each engine block takes the 32 input frames that came
+// in while the previous block played (32 frames of latency). At other rates,
+// the input is resampled to 48 kHz, run through the same blocks, and the
+// result resampled back.
+void CyclesEmuProcessor::fxProcess(juce::AudioBuffer<float>& buffer)
+{
+    const int n = buffer.getNumSamples();
+    const float* inL = buffer.getReadPointer(0);
+    const float* inR = buffer.getNumChannels() > 1 ? buffer.getReadPointer(1) : inL;
+    float* outL = buffer.getWritePointer(0);
+    float* outR = buffer.getWritePointer(1);
+    if (!resample)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            if (blockPos == kBlock)
+            {
+                float oL[kBlock], oR[kBlock];
+                fxEngineBlock(inCollectL, inCollectR, oL, oR);
+                std::copy(oL, oL + kBlock, blockL);
+                std::copy(oR, oR + kBlock, blockR);
+                blockPos = 0;
+            }
+            const float l = inL[i], r = inR[i];   // read before the output overwrites them
+            outL[i] = blockL[blockPos];
+            outR[i] = blockR[blockPos];
+            inCollectL[blockPos] = l;
+            inCollectR[blockPos] = r;
+            ++blockPos;
+        }
+        return;
+    }
+    inFifoL.insert(inFifoL.end(), inL, inL + n);
+    inFifoR.insert(inFifoR.end(), inR, inR + n);
+    const int needed = resampler.needed(n);
+    while ((int)srcL.size() < needed)
+    {
+        float in48L[kBlock] = {}, in48R[kBlock] = {}, oL[kBlock], oR[kBlock];
+        if ((int)inFifoL.size() >= inResampler.needed(kBlock))   // else a gap of silence
+        {
+            const int used = inResampler.process(inFifoL.data(), inFifoR.data(), in48L, in48R, kBlock);
+            inFifoL.erase(inFifoL.begin(), inFifoL.begin() + used);
+            inFifoR.erase(inFifoR.begin(), inFifoR.begin() + used);
+        }
+        fxEngineBlock(in48L, in48R, oL, oR);
+        srcL.insert(srcL.end(), oL, oL + kBlock);
+        srcR.insert(srcR.end(), oR, oR + kBlock);
+    }
+    const int used = resampler.process(srcL.data(), srcR.data(), outL, outR, n);
+    srcL.erase(srcL.begin(), srcL.begin() + used);
+    srcR.erase(srcR.begin(), srcR.begin() + used);
 }
 
 void CyclesEmuProcessor::renderEngineBlock()
@@ -613,6 +837,12 @@ void CyclesEmuProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 if (auto bpm = pos->getBpm())
                     targetBpm = juce::jlimit(30.0, 300.0, *bpm);
     shownBpm.store(targetBpm);
+    if (isFx())
+    {
+        fxProcess(buffer);
+        outPeak.store(buffer.getMagnitude(0, n), std::memory_order_relaxed);
+        return;
+    }
 
     if (!resample)
     {

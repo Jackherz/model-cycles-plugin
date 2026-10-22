@@ -971,6 +971,8 @@ HANDLERS = {
 
 
 class Translator:
+    hooks = set()   # PCs that call X->hook first (--hook)
+
     def __init__(self, img, table, extra=()):
         # code is read from the image, then from `extra` (base, bytes)
         # regions: code the firmware runs from RAM, e.g. a payload copied
@@ -1088,6 +1090,8 @@ class Translator:
             ins = self.insns[a]
             if a in self.labels:
                 w('L_%08x:\n' % a)
+            if a in self.hooks:
+                w('    if (X->hook) X->hook(X, 0x%08xu);   /* --hook */\n' % a)
             w('    TRACE(0x%08xu); /* %s */\n' % (a, ins.name))
             nxt = a + ins.length
             follows = k + 1 < len(starts) and starts[k + 1] == nxt
@@ -1181,6 +1185,8 @@ def main():
     ap.add_argument('--state', help='an engine state (dump_state.py) to read code outside the image from')
     ap.add_argument('--code', action='append', default=[], metavar='LO:HI',
                     help='with --state: an address range of code that runs from RAM (hex)')
+    ap.add_argument('--hook', action='append', default=[], metavar='PC',
+                    help='call the context\'s hook before the instruction at PC (hex); it must start a label')
     args = ap.parse_args()
     img = open(os.path.join(args.sections, 'section_3_MAIN_OS.bin'), 'rb').read()
     table = json.load(open(os.path.join(P, 'aot', 'opcode_table.json')))
@@ -1194,7 +1200,11 @@ def main():
         lo, hi = (int(x, 16) for x in rng.split(':'))
         extra += state_regions(args.state, lo, hi)
     tr = Translator(img, table, extra)
+    tr.hooks = set(int(h, 16) for h in args.hook)
     tr.discover(roots)
+    # a hook must be reachable only by falling into it or jumping to its
+    # label, both of which pass the call: make each hook PC a label
+    tr.labels |= tr.hooks
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     path = args.out
     with open(path, 'w') as f:

@@ -37,7 +37,46 @@ struct mc_engine {
     uint32_t counter, kit;
     int phase;
     uint64_t blocks;
+    /* CyclesFX: the next block's input and how much of it each send gets */
+    const float *in_l, *in_r;
+    float in_delay, in_reverb;
 };
+
+/* The mixer (0x400567ba) sums the tracks' delay sends into an interleaved
+ * stereo bus of fractional Q31 (L 0x8000b990, R 0x8000b994, 8 bytes a
+ * frame, 32 frames), runs the delay on it (0x40057488 at 0x4005699c), sums
+ * the reverb sends (with the delay's return) into the same bus and runs the
+ * reverb (0x400579c4 at 0x40056a2c). The render built with --hook at the
+ * two calls' first pushes lets the host add to the bus just before each. */
+#define FX_HOOK_DELAY  0x4005698cu
+#define FX_HOOK_REVERB 0x40056a1cu
+#define SEND_BUS       0x8000b990u
+
+static void fx_hook(mc_ctx *x, uint32_t pc)
+{
+    mc_engine *g = x->hook_user;
+    const float amount = pc == FX_HOOK_DELAY ? g->in_delay : pc == FX_HOOK_REVERB ? g->in_reverb : 0.0f;
+    if (!g->in_l || amount == 0.0f)
+        return;
+    for (int i = 0; i < 32; i++)
+        for (int c = 0; c < 2; c++) {
+            const uint32_t a = SEND_BUS + 8 * i + 4 * c;
+            const double add = (double)(c ? g->in_r[i] : g->in_l[i]) * amount * 2147483648.0;
+            double s = (double)(int32_t)mc_ld32(x, a) + add;
+            s = s > 2147483647.0 ? 2147483647.0 : s < -2147483648.0 ? -2147483648.0 : s;
+            mc_st32_raw(x, a, (uint32_t)(int32_t)s);
+        }
+}
+
+void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend)
+{
+    g->in_l = l;
+    g->in_r = r;
+    g->in_delay = delaySend;
+    g->in_reverb = reverbSend;
+    g->x->hook = l ? fx_hook : NULL;
+    g->x->hook_user = g;
+}
 
 mc_engine *mc_engine_new(const char *dir, int *err)
 {

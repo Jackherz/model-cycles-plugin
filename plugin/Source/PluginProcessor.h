@@ -26,7 +26,7 @@ enum class Kind
 };
 
 // How the editor and the host show its value.
-enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff };
+enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff, NoteLength };   // NoteLength: 32 = a beat
 
 struct ParamDef
 {
@@ -49,12 +49,17 @@ constexpr int kNumLfoDests = 18;
 extern const int kLfoDestValues[kNumLfoDests];
 
 juce::String paramId(int track, const char* id);   // "t1_decay", "fx_delaytime", "midimode"
+
+// Musical values a knob snaps to while turned (bare parameter id), empty for
+// none: the delay time's note lengths, the LFO speed's even rates.
+const std::vector<int>& snapPoints(const juce::String& bareId);
 } // namespace cyclesemu
 
-// Which plugin a build is: CyclesEmu (six tracks, as the hardware) or
+// Which plugin a build is: CyclesEmu (six tracks, as the hardware),
 // CyclesVoice (one sound played polyphonically on the six tracks as six
-// voices). Each plugin target compiles CYCLES_PRODUCT.
-enum class Product { Full, Voice };
+// voices) or CyclesFX (the delay and reverb as an audio effect, the host's
+// audio fed into their sends). Each plugin target compiles CYCLES_PRODUCT.
+enum class Product { Full, Voice, Fx };
 #ifndef CYCLES_PRODUCT
 #define CYCLES_PRODUCT 0
 #endif
@@ -65,7 +70,8 @@ public:
     explicit CyclesEmuProcessor(Product = (Product)CYCLES_PRODUCT);
     const Product product;
     bool isVoice() const { return product == Product::Voice; }
-    int trackPages() const { return isVoice() ? 1 : cyclesemu::kTracks; }
+    bool isFx() const { return product == Product::Fx; }
+    int trackPages() const { return isFx() ? 0 : isVoice() ? 1 : cyclesemu::kTracks; }
     ~CyclesEmuProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -75,8 +81,11 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return isVoice() ? "CyclesVoice" : "CyclesEmu"; }
-    bool acceptsMidi() const override { return true; }
+    const juce::String getName() const override
+    {
+        return isFx() ? "CyclesFX" : isVoice() ? "CyclesVoice" : "CyclesEmu";
+    }
+    bool acceptsMidi() const override { return !isFx(); }
     bool producesMidi() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
     int getNumPrograms() override { return 1; }
@@ -95,6 +104,12 @@ public:
     // scripts/init_sounds.py), the kit to the one a new project starts with
     // (the engine state's kit, as loaded). Message thread.
     bool canResetTrack() const { return haveInitSounds; }
+    // A parameter's default as on the hardware (plain value): a track's
+    // sound settings from its current machine's init sound, its level from
+    // the new kit, mute and solo off; the FX from the new kit; anything else
+    // its declared default. Knobs reset to it on double-click, and the
+    // parameters report it to the host.
+    float defaultFor(const juce::String& id) const;
     void resetTrack(int track);
     void resetKit();
     const juce::ValueTree& newKit() const { return initKit; }
@@ -113,6 +128,7 @@ public:
     bool trackAudible(int t) const { return levelSent[t] != 0; }
 
 private:
+    static BusesProperties busesFor(Product);
     struct Slot
     {
         juce::String id;
@@ -143,6 +159,15 @@ private:
     } voices[cyclesemu::kTracks];
     uint32_t voiceClock = 0;
     std::atomic<float>* voiceCount = nullptr;
+    // CyclesFX: the input, 32 frames at 48 kHz per engine block, run through
+    // the sends (mc_engine_set_input); the dry signal waits as long, for Mix
+    std::atomic<float>*fxDelaySend = nullptr, *fxReverbSend = nullptr, *fxMix = nullptr;
+    float inCollectL[cyclesemu::kBlock] = {}, inCollectR[cyclesemu::kBlock] = {};
+    float inBlockL[cyclesemu::kBlock] = {}, inBlockR[cyclesemu::kBlock] = {};
+    std::vector<float> inFifoL, inFifoR;   // host-rate input, when resampling
+    Resampler inResampler;                 // host rate -> 48 kHz
+    void fxProcess(juce::AudioBuffer<float>&);
+    void fxEngineBlock(const float* inL, const float* inR, float* outL, float* outR);
     void voiceNote(int note, int velocity, bool on);
     void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
     // Mute and Solo as on a mixer: the firmware's mute only stops sequencer

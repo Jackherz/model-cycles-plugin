@@ -43,7 +43,29 @@ private:
     juce::String label;
     std::vector<std::unique_ptr<IconButton>> icons;
     std::unique_ptr<juce::ParameterAttachment> iconAtt;
-    juce::Slider knob;
+    // a knob that returns to the hardware's default on double-click
+    // a knob that returns to the hardware's default on double-click, and,
+    // while dragged, snaps to its musical values (delay time, LFO speed)
+    // when within a step and a half of one; Alt turns it freely
+    struct Knob : juce::Slider
+    {
+        std::function<void()> onDoubleClick;
+        const std::vector<int>* snaps = nullptr;
+        void mouseDoubleClick(const juce::MouseEvent&) override
+        {
+            if (onDoubleClick)
+                onDoubleClick();
+        }
+        double snapValue(double v, DragMode mode) override
+        {
+            if (snaps == nullptr || mode == notDragging || juce::ModifierKeys::currentModifiers.isAltDown())
+                return v;
+            for (int s : *snaps)
+                if (std::abs(v - s) <= 1.5)
+                    return s;
+            return v;
+        }
+    } knob;
     juce::ComboBox box;
     juce::ToggleButton toggle;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> knobAtt;
@@ -72,6 +94,7 @@ public:
     void resized() override;
     // a die on the title line: randomise the section (shift: a variation)
     void enableDice(std::function<void(bool variation)> onDice);
+    int minColumns = 4;   // the grid's narrowest: 4 keeps knobs alike across pages
 
 private:
     std::unique_ptr<IconButton> dice;
@@ -188,7 +211,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
-    Section delay{"DELAY"}, reverb{"REVERB"};
+    Section delay{"DELAY"}, reverb{"REVERB"}, input{"INPUT"};
+    bool hasInput = false;   // CyclesFX: the sends' amounts and Mix
     juce::Rectangle<int> noteArea;
 };
 

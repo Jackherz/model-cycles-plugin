@@ -1094,6 +1094,78 @@ audio can be added there mid-render.
   - A note on track 3 shows on track 3's meter only.
   - Host tests (6) and auval (Cyem, Cyvo) pass.
 
+## Step 25: CyclesFX, hardware defaults, musical delay times (2026-10-23)
+
+### CyclesFX: the delay and reverb as an audio effect
+
+- **The mixer** (`0x400567ba`, every block, in order):
+  1. Sums the tracks' delay sends (per-track ramped gains `0x40a78bd0` L /
+     `0x40a78bb8` R, `0x40056716`) into an interleaved stereo Q31 bus,
+     `0x8000b990` (L) / `0x8000b994` (R), 32 frames, 8 bytes a frame.
+  2. Runs the delay, `0x40057488(0x8000ba90, 0x8000b990, ...)`, called at
+     `0x4005699c`.
+  3. Copies the delay's return into a seventh track slot (`0x80001b58`, by
+     `0x400567a4`).
+  4. Sums the reverb sends with it into the same bus (`0x40056698`, gains
+     `0x40a78b9c` / `0x40a78b80`).
+  5. Runs the reverb, `0x400579c4(0x8000bb90, 0x8000b990, ...)`, at
+     `0x40056a2c`.
+  6. The final mix follows. Profiled: every block runs all of it.
+- **Translator `--hook PC`**: before that instruction, `if (X->hook)
+  X->hook(X, pc)`. `mc_ctx.hook`/`hook_user` are new; a NULL hook costs one
+  branch.
+  - `build-stf` is translated with `--hook 4005698c --hook 40056a1c`, the
+    first pushes of the delay and reverb calls. Both PCs were already
+    labels, and render.c gained exactly those two lines.
+  - Still 300/300 bit-exact with no hook installed (`cap-filter`).
+- **Engine API**: `mc_engine_set_input(g, l, r, delaySend, reverbSend)`.
+  Its hook adds 32 frames of input times each amount (floats x 2^31,
+  saturated) to the bus before each effect.
+- **Plugin**: `Product::Fx`, target CyclesFX (`aufx Cyfx Pers`).
+  - Stereo in and out, no MIDI.
+  - Parameters: the four FX, plus Delay Send / Reverb Send (0-127, square
+    law; default 80) and Mix (0-100 %, default 100 = effects only, for a
+    return channel).
+  - Page: INPUT, DELAY and REVERB sections. `Section::minColumns` lets
+    small sections use wider cells.
+- **Timing**:
+  - At 48 kHz each engine block takes the 32 frames that arrived during the
+    previous one: latency 32.
+  - At other rates the input is resampled to 48 kHz, the same blocks run
+    (a block's input is its own), and the result is resampled back. Dry and
+    wet go through the same path, so they stay aligned.
+  - Both sides start with silence (output `kTaps + 64` at 48 kHz, input
+    `kTaps + 128` at the host rate) so neither runs dry. Latency =
+    inAhead - D + (outAhead - D) * rate / 48k (D = 95), 373 at 44.1 kHz.
+  - A first try with only an input head start ran the input dry at start:
+    silence blocks, and a shifted latency (measured 237, reported 484).
+- **HostTest `fxTest`** at 48 and 44.1 kHz:
+  - sends 0: silence;
+  - a click into the delay alone: its echo;
+  - Mix 0: the input after exactly the reported latency (cross-correlation:
+    32/32, 373/373);
+  - load 5-6 %.
+
+### Hardware defaults
+
+- `defaultFor(id)`: a track parameter's value in its current machine's
+  firmware init sound (`defaults.json`); level from the new kit; mute and
+  solo off; the FX from the new kit. Anything else: the declared default.
+- Knobs return to it on double-click (`ParamControl::Knob`).
+- The parameters report it to the host through `HardwareDefault<...>`
+  wrappers, whose `getDefaultValue` asks the processor.
+- EditorShot: after Reset Track, 0 of 29 parameters are off their default,
+  and 0 report a different one to the host.
+
+### Musical delay time and LFO speed
+
+- Delay time (32 to the beat, `Show::NoteLength`) shows note lengths by
+  name: 1/64, 1/32, 1/32., 1/16, 1/16., 1/8, 1/8., 1/4, 1/4., 1/2, 1/2.,
+  1 BAR at 127. The names can also be typed.
+- While dragged, the knob snaps to them within 1.5 steps
+  (`Knob::snapValue`, `snapPoints`); Alt turns it freely.
+- LFO speed snaps the same way to 64 ±4, 8, 16, 32, 48 and the ends.
+
 ## Next steps
 
 
@@ -1150,6 +1222,30 @@ audio can be added there mid-render.
         filter-response display like the LFO's), engine params at the new
         record offsets, CC 74/71, and LFO destinations if the tweak adds
         them to the LFO's list.
+
+   h. **Filter types, after the Digitone II's** (Jack, 2026-10-23).
+      - The track filter today is Modded-Cycles' SVF in the firmware (LP or
+        HP).
+      - The DN2's filters run on its SHARC DSP, which can't run in real
+        time yet (the paused DN2 project), so they can't be moved over as
+        code.
+      - Route: a `--hook` where the mixer takes the finished track buffers
+        (`0x80001858 + 128 t`, at the mixer's entry `0x400567ba`).
+      - The plugin then runs its own per-track filters in place: types as
+        the DN2's, from its firmware notes and code (`~/Documents/AI/
+        digitone2-plugin`). Faithful re-creations, not bit-exact.
+      - The DN2's types (its NOTES, sound record `0xb4 + 2r`): 0
+        Multimode, 1 Lowpass 4, 2 Equalizer, 3 Comb-, 4 Legacy (LP/HP),
+        5 Comb+.
+   j. **Legato and portamento, as on the Syntakt** (Jack, 2026-10-23).
+      Not in the Model:Cycles firmware: plugin-side, a held note's new note
+      re-pitches the sounding voice (no retrigger), gliding its Pitch / Fine
+      Tune words over a Glide time.
+   k. CyclesFX: a smaller window (it shares the instrument's 960x780).
+   i. **CHOMPI's tape record function** (Jack, 2026-10-23,
+      https://github.com/CHOMPI-Club/CHOMPI). After everything else is
+      finished and debugged: study how it works and how it could fit the
+      plugin.
 
 Future ideas (Jack, 2026-10-22): make it its own instrument rather than an
 Elektron copy, for future builds; not scheduled yet.
