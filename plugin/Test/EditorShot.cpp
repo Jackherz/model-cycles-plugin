@@ -51,6 +51,17 @@ int main(int argc, char** argv)
         juce::PNGImageFormat().writeImageToStream(img, os);
     }
 
+    // the filter page: a resonant low-pass with some envelope, on track 1
+    set("t1_fcut", 40); set("t1_freso", 96); set("t1_fenv", 84); set("t1_fdec", 50);
+    e->showPage(0);
+    {
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-filter.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+
     // a Syntakt engine: track 2 on SY Bits, its knobs relabelled
     set("t2_machine", 9);
     e->showPage(1);

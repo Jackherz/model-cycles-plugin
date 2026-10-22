@@ -104,6 +104,17 @@ const std::map<juce::String, HelpText> kHelp = {
     {"lfophase",
      {"LFO Start Phase",
       "Where in the waveform the LFO starts when a note restarts it. 0 is the start, 64 halfway."}},
+    {"fcut",
+     {"Filter Cutoff",
+      "The track's filter: left of centre a low-pass (L64 closed, 5 Hz, to L1 open), right a high-pass (H1 "
+      "barely, to H63 at 19 kHz), OFF in the centre leaves the track untouched. 12 dB per octave, after "
+      "Vol+Dist. CC 74."}},
+    {"freso", {"Filter Reso", "The filter's resonance, from none to a sharp, singing peak. CC 71."}},
+    {"fenv",
+     {"Filter Env",
+      "How far an envelope moves the cutoff on each note, up or down (0 is none). It starts on every note "
+      "and falls over Env Decay."}},
+    {"fdec", {"Filter Env Decay", "How long the filter envelope takes to fall, from 5 ms to 10 seconds."}},
     {"delaytime",
      {"Delay Time", "The delay time, synced to tempo: 32 is one beat, 64 two beats."}},
     {"delayfeedback",
@@ -123,7 +134,10 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Host Tempo",
       "On: the engine follows your DAW's tempo. Off: the Tempo knob sets it, even inside a DAW."}},
     {"tempo",
-     {"Tempo", "The engine's tempo in BPM when Host Tempo is off. Delay time and synced LFOs follow it."}},
+     {"Tempo",
+      "The engine's tempo in BPM. Delay time and synced LFOs follow it. With HOST lit it follows your DAW. "
+      "Click HOST to set it here: drag the display up or down, or click the arrows for 1 BPM steps (shift: "
+      "finer). The bars show the output level."}},
     {"outgain", {"Output", "Output gain in dB, after the engine."}},
 };
 } // namespace

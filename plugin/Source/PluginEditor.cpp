@@ -6,11 +6,11 @@ using namespace retro;
 
 namespace
 {
-constexpr int kW = 960, kH = 600;
+constexpr int kW = 960, kH = 760;
 // the window's furniture
 const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kToolbar(10, 32, kW - 20, 124), kTabs(14, 160, kW - 28, 24),
-    kPanel(10, 182, kW - 20, 386), kStatus(4, kH - 28, kW - 8, 24);
-constexpr int kLogoW = 220;
+    kPanel(10, 182, kW - 20, 546), kStatus(4, kH - 28, kW - 8, 24);
+constexpr int kLogoW = 176;
 
 void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
 } // namespace
@@ -36,6 +36,7 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
                            Style s, IconSet iconSet)
     : style(s), paramID(id), label(lbl)
 {
+    getProperties().set("helpId", id);
     caption.setText(label, juce::dontSendNotification);
     caption.setJustificationType(juce::Justification::centred);
     auto* p = st.getParameter(id);
@@ -260,7 +261,7 @@ float LfoScope::valueAt(const State& s, double t, double window) const
     return juce::jlimit(-1.0f, 1.0f, v);
 }
 
-juce::Rectangle<int> LfoScope::plotArea() const { return getLocalBounds().reduced(10, 6).withTrimmedTop(20); }
+juce::Rectangle<int> LfoScope::plotArea() const { return getLocalBounds().reduced(12, 8).withTrimmedTop(20); }
 
 void LfoScope::timerCallback()
 {
@@ -277,10 +278,8 @@ void LfoScope::paint(juce::Graphics& g)
 {
     const auto s = read();
     auto r = getLocalBounds();
-    g.setColour(kLcd);
-    g.fillRect(r);
-    sunken(g, r);
-    const auto dim = kLcd.interpolatedWith(kLcdText, 0.3f), faint = kLcd.interpolatedWith(kLcdText, 0.16f);
+    codecScreen(g, r);
+    const auto dim = kPhosphorDim, faint = kPhosphorFaint;
 
     // header: waveform and rate, destination
     auto head = r.reduced(10, 6).removeFromTop(14);
@@ -300,12 +299,24 @@ void LfoScope::paint(juce::Graphics& g)
     else
         rate = num(cps) + " Hz";
     static const char* shortWave[] = {"Tri", "Sin", "Sqr", "Saw", "Env", "Rmp", "Rnd"};
-    drawText(g, juce::String(shortWave[s.wave]) + " " + rate, head, juce::Justification::centredLeft, kLcdText);
-    drawText(g, "> " + kLfoDestNames[s.dest], head, juce::Justification::centredRight,
-             s.dest == 0 ? dim : kLcdText);
+    // the scope's HUD: "- ZOOM LEVEL - - 100 -"
+    drawText(g, "- " + juce::String(shortWave[s.wave]) + " - " + rate + " -", head, juce::Justification::centredLeft,
+             kLcdText);
 
     auto p = plotArea();
     const int cy = p.getCentreY(), half = p.getHeight() / 2 - 1, w = p.getWidth();
+    // HUD rules above the plot and corner brackets around it
+    g.setColour(dim);
+    g.fillRect(p.getX(), p.getY() - 3, w, 1);
+    const int b = 6;
+    for (auto [x, y, dx, dy] : {std::tuple{p.getX() - 2, p.getY() - 1, 1, 1},
+                                std::tuple{p.getRight() + 1, p.getY() - 1, -1, 1},
+                                std::tuple{p.getX() - 2, p.getBottom(), 1, -1},
+                                std::tuple{p.getRight() + 1, p.getBottom(), -1, -1}})
+    {
+        g.fillRect(dx > 0 ? x : x - b + 1, y, b, 1);
+        g.fillRect(x, dy > 0 ? y : y - b + 1, 1, b);
+    }
     const double window = windowCycles(s);
     // dashed zero line; a tick per cycle while they are few enough to count
     g.setColour(faint);
@@ -347,9 +358,221 @@ void LfoScope::paint(juce::Graphics& g)
     const double dir = s.speed >= 64 ? 1.0 : -1.0;
     curve([&](double t) { return lfoWave(s.wave, s.phase / 128.0 + dir * t); }, faint);
     curve([&](double t) { return valueAt(s, t, window); }, kLcdText);
+    // the destination, tagged on the plot like the scope's "FLY"
+    {
+        const auto tag = "> " + kLfoDestNames[s.dest];
+        auto box = juce::Rectangle<int>(0, 0, textWidth(tag) + 8, textHeight() + 4)
+                       .withPosition(p.getRight() - textWidth(tag) - 10, p.getBottom() - textHeight() - 6);
+        g.setColour(kCodecBg);
+        g.fillRect(box);
+        g.setColour(dim);
+        g.drawRect(box, 1);
+        drawText(g, tag, box, juce::Justification::centred, s.dest == 0 ? dim : kLcdText);
+    }
+    scanlines(g, r.reduced(4));
 }
 
-TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t)
+CodecTempo::CodecTempo(CyclesEmuProcessor& p) : proc(p)
+{
+    tempo = p.state().getParameter("tempo");
+    follow = p.state().getParameter("followhost");
+    getProperties().set("helpId", "tempo");
+    shownBpm = p.currentBpm();
+    startTimerHz(20);
+}
+
+juce::Rectangle<int> CodecTempo::hostPlate() const
+{
+    return getLocalBounds().removeFromBottom(18).withSizeKeepingCentre(76, 16);
+}
+juce::Rectangle<int> CodecTempo::screen() const
+{
+    return getLocalBounds().withTrimmedTop(22).withTrimmedBottom(24).reduced(28, 0);
+}
+juce::Rectangle<int> CodecTempo::left() const
+{
+    auto s = screen();
+    return {s.getX() - 24, s.getCentreY() - 9, 18, 18};
+}
+juce::Rectangle<int> CodecTempo::right() const
+{
+    auto s = screen();
+    return {s.getRight() + 6, s.getCentreY() - 9, 18, 18};
+}
+bool CodecTempo::following() const { return follow->getValue() >= 0.5f; }
+
+void CodecTempo::step(double delta)
+{
+    auto v = juce::jlimit(30.0, 300.0, (double)tempo->convertFrom0to1(tempo->getValue()) + delta);
+    tempo->beginChangeGesture();
+    tempo->setValueNotifyingHost(tempo->convertTo0to1((float)v));
+    tempo->endChangeGesture();
+}
+
+void CodecTempo::mouseDown(const juce::MouseEvent& e)
+{
+    auto pos = e.getPosition();
+    if (hostPlate().contains(pos))
+    {
+        follow->beginChangeGesture();
+        follow->setValueNotifyingHost(following() ? 0.0f : 1.0f);
+        follow->endChangeGesture();
+    }
+    else if (!following() && left().contains(pos))
+        step(e.mods.isShiftDown() ? -0.1 : -1.0);
+    else if (!following() && right().contains(pos))
+        step(e.mods.isShiftDown() ? 0.1 : 1.0);
+    else if (!following() && screen().contains(pos))
+    {
+        dragging = true;
+        dragStart = tempo->convertFrom0to1(tempo->getValue());
+        tempo->beginChangeGesture();
+    }
+    repaint();
+}
+
+void CodecTempo::mouseDrag(const juce::MouseEvent& e)
+{
+    if (!dragging)
+        return;
+    // 1 BPM per 2 pixels, 0.05 with shift
+    const double per = e.mods.isShiftDown() ? 0.025 : 0.5;
+    auto v = juce::jlimit(30.0, 300.0, dragStart - e.getDistanceFromDragStartY() * per);
+    tempo->setValueNotifyingHost(tempo->convertTo0to1((float)v));
+}
+
+void CodecTempo::mouseUp(const juce::MouseEvent&)
+{
+    if (dragging)
+        tempo->endChangeGesture();
+    dragging = false;
+}
+
+void CodecTempo::timerCallback()
+{
+    // the meter falls like the Codec's bars: fast up, slow down
+    const float peak = juce::jmin(1.0f, proc.outputPeak());
+    const float next = peak > level ? peak : level * 0.85f;
+    const double bpm = proc.currentBpm();
+    if (std::abs(next - level) > 0.004f || std::abs(bpm - shownBpm) > 0.004)
+    {
+        level = next;
+        shownBpm = bpm;
+        repaint();
+    }
+}
+
+void CodecTempo::paint(juce::Graphics& g)
+{
+    auto top = getLocalBounds().removeFromTop(16).withSizeKeepingCentre(76, 14);
+    labelPlate(g, top, "Tempo");
+    auto in = codecScreen(g, screen());
+    // signal bars: the output level, on a dB scale (-48..0 dB)
+    auto bars = in.removeFromLeft(44).reduced(6, 8);
+    const float db = juce::Decibels::gainToDecibels(level, -48.0f);
+    signalBars(g, bars, 8, (db + 48.0f) / 48.0f, kPhosphor, kPhosphorFaint);
+    g.setColour(kPhosphorFaint);
+    g.fillRect(in.getX(), in.getY() + 4, 1, in.getHeight() - 8);
+    sevenSeg(g, juce::String(shownBpm, 2).paddedLeft(' ', 6), in.reduced(4, 0), juce::jmin(30, in.getHeight() - 12),
+             kPhosphor, kPhosphorFaint);
+    scanlines(g, screen().reduced(4));
+    // arrows: the Codec's frequency buttons, dim while the host sets the tempo
+    for (auto [r, dir] : {std::pair{left(), -1}, std::pair{right(), 1}})
+    {
+        g.setColour(following() ? kGunLight : kGunDark);
+        for (int i = 0; i < 7; ++i)   // a pixel triangle
+        {
+            int hgt = 2 * (dir < 0 ? i : 6 - i) + 2;
+            g.fillRect(r.getCentreX() - 4 + i, r.getCentreY() - hgt / 2, 1, hgt);
+        }
+    }
+    labelPlate(g, hostPlate(), "Host", following());
+}
+
+FilterScope::FilterScope(CyclesEmuProcessor& p, int t)
+{
+    const char* ids[] = {"fcut", "freso", "fenv", "fdec"};
+    for (int i = 0; i < 4; ++i)
+        raw[i] = p.state().getRawParameterValue(paramId(t, ids[i]));
+    getProperties().set("helpId", paramId(t, "fcut"));
+    setInterceptsMouseClicks(false, false);
+    startTimerHz(30);
+}
+
+void FilterScope::timerCallback()
+{
+    if (!isShowing())
+        return;
+    bool changed = false;
+    for (int i = 0; i < 4; ++i)
+        if (int v = juce::roundToInt(raw[i]->load()); v != shown[i])
+            shown[i] = v, changed = true;
+    if (changed)
+        repaint();
+}
+
+void FilterScope::paint(juce::Graphics& g)
+{
+    // The cutoff law from Modded-Cycles' notes/47: about 2 semitones a
+    // step, low-pass L64 5 Hz .. L1 20 kHz, high-pass H1 5 Hz .. H63 19 kHz;
+    // Q 0.5 .. 50 over the resonance knob. Approximate: the exact table
+    // is in the tweak's code.
+    const int cut = juce::roundToInt(raw[0]->load()), res = juce::roundToInt(raw[1]->load());
+    const int env = juce::roundToInt(raw[2]->load()) - 64, dec = juce::roundToInt(raw[3]->load());
+    const bool off = cut == 64, lp = cut < 64;
+    const double fc = lp ? 20000.0 * std::pow(5.0 / 20000.0, (63 - cut) / 63.0)
+                         : 5.0 * std::pow(19000.0 / 5.0, (cut - 65) / 62.0);
+    const double q = 0.5 * std::pow(100.0, res / 127.0);
+
+    auto r = getLocalBounds();
+    auto in = codecScreen(g, r);
+    auto head = in.reduced(6, 3).removeFromTop(14);
+    auto num = [](double hz) {
+        return hz >= 1000.0 ? juce::String(hz / 1000.0, hz >= 10000.0 ? 1 : 2) + "kHz" : juce::String((int)hz) + "Hz";
+    };
+    drawText(g, off ? juce::String("- OFF -") : "- " + juce::String(lp ? "LP" : "HP") + " " + num(fc) + " -",
+             head, juce::Justification::centredLeft, kPhosphor);
+    drawText(g, env == 0 ? juce::String("ENV 0") : "ENV " + juce::String(env > 0 ? "+" : "") + juce::String(env) +
+                                                       " D" + juce::String(dec),
+             head, juce::Justification::centredRight, env == 0 ? kPhosphorDim : kPhosphor);
+
+    auto p = in.reduced(8, 4).withTrimmedTop(16);
+    // log frequency 20 Hz .. 20 kHz; -30 .. +24 dB
+    auto xOf = [&](double hz) { return p.getX() + (int)(std::log(hz / 20.0) / std::log(1000.0) * p.getWidth()); };
+    auto yOf = [&](double db) {
+        return p.getY() + (int)((24.0 - juce::jlimit(-30.0, 24.0, db)) / 54.0 * (p.getHeight() - 2));
+    };
+    g.setColour(kPhosphorFaint);
+    for (double hz : {100.0, 1000.0, 10000.0})          // decade lines
+        for (int y = p.getY(); y < p.getBottom(); y += 4)
+            g.fillRect(xOf(hz), y, 1, 2);
+    for (int x = p.getX(); x < p.getRight(); x += 6)    // 0 dB
+        g.fillRect(x, yOf(0.0), 3, 1);
+    g.setColour(kPhosphor);
+    int prev = -1;
+    for (int x = 0; x < p.getWidth(); x += 2)
+    {
+        const double hz = 20.0 * std::pow(1000.0, (double)x / p.getWidth());
+        double db = 0.0;
+        if (!off)
+        {
+            // the 2-pole state-variable filter's magnitude
+            const double u = hz / fc, den = std::sqrt((1 - u * u) * (1 - u * u) + (u / q) * (u / q));
+            db = 20.0 * std::log10((lp ? 1.0 : u * u) / den);
+        }
+        const int y = yOf(db) & ~1;
+        g.fillRect(p.getX() + x, prev < 0 ? y : juce::jmin(prev, y), 2, prev < 0 ? 2 : std::abs(prev - y) + 2);
+        prev = y;
+    }
+    if (!off)   // the cutoff's mark
+    {
+        g.setColour(kPhosphorDim);
+        g.fillRect(xOf(juce::jlimit(20.0, 20000.0, fc)), p.getY(), 1, p.getHeight());
+    }
+    scanlines(g, in);
+}
+
+TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterScope(proc, t)
 {
     using S = ParamControl::Style;
     auto& st = proc.state();
@@ -397,11 +620,19 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t)
     lfo.addCustomRow(&scope, 84);
     lfo.addRow({make(st, t, "lfospeed", "Speed", S::Knob), make(st, t, "lfodepth", "Depth", S::Knob),
                 make(st, t, "lfofade", "Fade", S::Knob), make(st, t, "lfophase", "Phase", S::Knob)});
+    addAndMakeVisible(filter);
+    filter.addRow({make(st, t, "fcut", "Cutoff", S::Knob), make(st, t, "freso", "Reso", S::Knob),
+                   make(st, t, "fenv", "Env", S::Knob), make(st, t, "fdec", "Decay", S::Knob)});
+    addAndMakeVisible(filterScope);
 }
 
 void TrackPage::resized()
 {
     auto r = getLocalBounds();
+    // the filter page along the bottom: its knobs, and the response beside
+    auto bottom = r.removeFromBottom(162).withTrimmedTop(6);
+    filter.setBounds(bottom.removeFromLeft(bottom.getWidth() * 62 / 100).withTrimmedRight(6));
+    filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedTop(8));
     sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
     lfo.setBounds(r.withTrimmedLeft(6));
 }
@@ -460,9 +691,8 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     };
     g("midimode", "MIDI Mode", S::Choice);
     g("keystrack", "Key Trk", S::Knob);
-    g("followhost", "Host Tempo", S::Toggle);
-    g("tempo", "Tempo", S::Knob);
     g("outgain", "Output", S::Knob);
+    addAndMakeVisible(codecTempo);   // tempo and host tempo
     status.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(status);
 
@@ -551,12 +781,12 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     const juce::String word = "CYCLES";
     for (int i = 0; i < word.length(); ++i)
     {
-        int x = logo.getX() + i * 6 * 5;
-        drawText(g, word.substring(i, i + 1), x + 3, logo.getY() + 3, kDark, 5);
-        drawText(g, word.substring(i, i + 1), x, logo.getY(), kAccents[i % 4], 5);
+        int x = logo.getX() + i * 6 * 4;
+        drawText(g, word.substring(i, i + 1), x + 3, logo.getY() + 3, kDark, 4);
+        drawText(g, word.substring(i, i + 1), x, logo.getY(), kAccents[i % 4], 4);
     }
-    drawText(g, "Emu  v1.0", logo.getX() + 2, logo.getY() + 46, kText);
-    drawText(g, "Model:Cycles", logo.getX() + 2, logo.getY() + 64, kDimText);
+    drawText(g, "Emu  v1.0", logo.getX() + 2, logo.getY() + 40, kText);
+    drawText(g, "Model:Cycles", logo.getX() + 2, logo.getY() + 58, kDimText);
 
     // the page panel, and the status bar
     g.setColour(kFace);
@@ -576,9 +806,10 @@ void CyclesEmuEditor::resized()
 {
     auto top = kToolbar.withTrimmedTop(20).reduced(12, 6);
     top.removeFromLeft(kLogoW);
-    int widths[] = {252, 100, 160, 86, 86};
-    for (size_t i = 0; i < globals.size(); ++i)
-        globals[i]->setBounds(top.removeFromLeft(widths[i]).reduced(4, 0));
+    globals[0]->setBounds(top.removeFromLeft(252).reduced(4, 0));   // MIDI mode
+    globals[1]->setBounds(top.removeFromLeft(100).reduced(4, 0));   // key track
+    globals[2]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
+    codecTempo.setBounds(top.reduced(6, 0).withTrimmedTop(-6));
     status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
     // left of the three caption boxes (3 x 18 + 2 px gap, 3 px margin)
     helpButton.setBounds(kTitle.getRight() - 3 - 56 - 22, kTitle.getY() + 3, 18, 16);
@@ -602,17 +833,17 @@ void CyclesEmuEditor::showHelpFor(const juce::String& id)
 {
     setHelpMode(true);
     // the visible control with that id (each track page has its own)
-    std::function<ParamControl*(juce::Component&)> find = [&](juce::Component& c) -> ParamControl* {
+    std::function<juce::Component*(juce::Component&)> find = [&](juce::Component& c) -> juce::Component* {
         if (!c.isVisible())
             return nullptr;
-        if (auto* pc = dynamic_cast<ParamControl*>(&c); pc != nullptr && pc->paramID == id)
-            return pc;
+        if (c.getProperties()["helpId"].toString() == id)
+            return &c;
         for (auto* ch : c.getChildren())
             if (auto* f = find(*ch))
                 return f;
         return nullptr;
     };
-    ParamControl* pc = nullptr;
+    juce::Component* pc = nullptr;
     for (auto* ch : getChildren())   // (the editor itself is not visible until a host shows it)
         if (pc == nullptr)
             pc = find(*ch);
@@ -632,10 +863,13 @@ void CyclesEmuEditor::updateHelp(juce::Component* under)
 {
     if (!helpMode)
         return;
-    ParamControl* pc = nullptr;
+    juce::Component* pc = nullptr;   // the nearest component with a help id
     for (auto* c = under; c != nullptr && c != this; c = c->getParentComponent())
-        if ((pc = dynamic_cast<ParamControl*>(c)) != nullptr)
+        if (c->getProperties().contains("helpId"))
+        {
+            pc = c;
             break;
+        }
     if (pc == helpTarget)
         return;
     helpTarget = pc;
@@ -644,14 +878,13 @@ void CyclesEmuEditor::updateHelp(juce::Component* under)
         bubble.setVisible(false);
         return;
     }
+    const juce::String id = pc->getProperties()["helpId"];
     // the macros' text depends on the track's machine
     int machine = 0;
-    if (pc->paramID.length() > 3 && pc->paramID[0] == 't' && pc->paramID[2] == '_')
-        if (auto* m = dynamic_cast<juce::AudioParameterChoice*>(
-                proc.state().getParameter(pc->paramID.substring(0, 3) + "machine")))
+    if (id.length() > 3 && id[0] == 't' && id[2] == '_')
+        if (auto* m = dynamic_cast<juce::AudioParameterChoice*>(proc.state().getParameter(id.substring(0, 3) + "machine")))
             machine = m->getIndex();
-    bubble.show(helpFor(pc->paramID, machine), getLocalArea(pc, pc->getLocalBounds()),
-                getLocalBounds().reduced(6));
+    bubble.show(helpFor(id, machine), getLocalArea(pc, pc->getLocalBounds()), getLocalBounds().reduced(6));
     bubble.toFront(false);
 }
 

@@ -40,10 +40,13 @@ const juce::StringArray kLfoWaveNames{"Triangle", "Sine", "Square", "Saw", "Env"
 const juce::StringArray kLfoTrigNames{"Free", "Trig", "Hold", "One", "Half"};
 const juce::StringArray kLfoMultNames{"1", "2", "4", "8", "16", "32", "64", "128", "256", "512", "1k", "2k"};
 // The firmware's destination values and the names its LFO page shows.
-const int kLfoDestValues[14] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22};
+// 28-31: the per-track filter's parameters (Modded-Cycles' track-filter,
+// NOTES.md step 17), which it adds to the LFO's list
+const int kLfoDestValues[kNumLfoDests] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 29, 30, 31};
 const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep", "Contour", "Punch",
                                       "Gate", "Fine Tune", "Decay", "Vol+Dist", "Delay Send",
-                                      "Reverb Send", "Pan"};
+                                      "Reverb Send", "Pan", "Filt Cutoff", "Filt Reso", "Filt Env",
+                                      "Filt Decay"};
 
 // Record offsets, CCs and clamps: NOTES.md and scripts/engine_inputs.py.
 const ParamDef kTrackParams[] = {
@@ -71,6 +74,12 @@ const ParamDef kTrackParams[] = {
     {"lfodepth", "LFO Depth", 0x24, 0, 127, 109, Kind::Sound, Show::Bipolar},
     {"lfofade", "LFO Fade", 0x1a, 0, 127, 104, Kind::Sound, Show::Bipolar},
     {"lfophase", "LFO Start Phase", 0x20, 0, 127, 107, Kind::Sound, Show::Plain},
+    // the per-track filter (k 28-31): cutoff L64..OFF..H63, reso, envelope
+    // amount (64 = none) and decay; CC 74 and 71 as on the Model:Samples
+    {"fcut", "Filter Cutoff", 0x4c, 0, 127, 74, Kind::Sound, Show::Cutoff},
+    {"freso", "Filter Reso", 0x4e, 0, 127, 71, Kind::Sound, Show::Plain},
+    {"fenv", "Filter Env", 0x50, 0, 127, -1, Kind::Sound, Show::Bipolar},
+    {"fdec", "Filter Env Decay", 0x52, 0, 127, -1, Kind::Sound, Show::Plain},
 };
 const int kNumTrackParams = (int)(sizeof kTrackParams / sizeof kTrackParams[0]);
 
@@ -116,6 +125,7 @@ juce::String showValue(Show s, int v)
         case Show::Bipolar: return (v > 64 ? "+" : "") + juce::String(v - 64);
         case Show::Semitones: return (v > 64 ? "+" : "") + juce::String(v - 64) + " st";
         case Show::Pan: return v == 64 ? juce::String("C") : v < 64 ? "L" + juce::String(64 - v) : "R" + juce::String(v - 64);
+        case Show::Cutoff: return v == 64 ? juce::String("OFF") : v < 64 ? "L" + juce::String(64 - v) : "H" + juce::String(v - 64);
         default: return juce::String(v);
     }
 }
@@ -128,8 +138,9 @@ int parseValue(Show s, const juce::String& t)
         case Show::Bipolar:
         case Show::Semitones: return x.getIntValue() + 64;
         case Show::Pan:
+        case Show::Cutoff:
             if (x.startsWithIgnoreCase("L")) return 64 - x.substring(1).getIntValue();
-            if (x.startsWithIgnoreCase("R")) return 64 + x.substring(1).getIntValue();
+            if (x.startsWithIgnoreCase("R") || x.startsWithIgnoreCase("H")) return 64 + x.substring(1).getIntValue();
             return 64;
         default: return x.getIntValue();
     }
@@ -242,7 +253,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::LfoDest:
         {
             int v = mc_engine_get_param(engine, s.track, 0x1c);
-            for (int i = 0; i < 14; ++i)
+            for (int i = 0; i < kNumLfoDests; ++i)
                 if (kLfoDestValues[i] == v)
                     return i;
             return 0;
@@ -332,9 +343,9 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         mc_engine_param(engine, ch, 0x18, juce::jlimit(0, 23, v));
         return;
     }
-    if (cc == 105)                                // destination: the firmware takes 0 and 10-22 only
+    if (cc == 105)                                // destination: the firmware takes 0, 10-22 and 28-31
     {
-        if (v == 0 || (v >= 10 && v <= 22))
+        if (v == 0 || (v >= 10 && v <= 22) || (v >= 28 && v <= 31))
             mc_engine_param(engine, ch, 0x1c, v);
         return;
     }
@@ -448,6 +459,7 @@ void CyclesEmuProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         }
         for (; it != midi.cend(); ++it)   // due after the last boundary: the next one
             carry.addEvent((*it).getMessage(), 0);
+        outPeak.store(buffer.getMagnitude(0, n), std::memory_order_relaxed);
         return;
     }
 
@@ -465,6 +477,7 @@ void CyclesEmuProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const int used = resampler.process(srcL.data(), srcR.data(), outL, outR, n);
     srcL.erase(srcL.begin(), srcL.begin() + used);
     srcR.erase(srcR.begin(), srcR.begin() + used);
+    outPeak.store(buffer.getMagnitude(0, n), std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* CyclesEmuProcessor::createEditor() { return new CyclesEmuEditor(*this); }

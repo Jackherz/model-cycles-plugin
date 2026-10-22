@@ -127,6 +127,12 @@ int load_test(juce::AudioPluginFormatManager& fm, const juce::String& path, doub
     while (pos + block <= total)
     {
         juce::MidiBuffer midi;
+        if (pos == 0)   // every track through its filter (step 17 builds): a resonant low-pass
+            for (int t = 0; t < 6; ++t)
+            {
+                midi.addEvent(juce::MidiMessage::controllerEvent(t + 1, 74, 36 + 4 * t), 0);
+                midi.addEvent(juce::MidiMessage::controllerEvent(t + 1, 71, 90), 0);
+            }
         if (pos >= nextNote)
         {
             for (int t = 0; t < 6; ++t)

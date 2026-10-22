@@ -807,6 +807,85 @@ at `0x400a7dfe`, a probe around the audio call, and others.
 - The fresh-boot kit replaces the factory kit as the plugin's starting
   sounds.
 
+## Step 17: a filter page per track, and the Codec look (2026-10-22)
+
+### The filter: Modded-Cycles' `track-filter` (their notes/47)
+
+- A 2-pole trapezoidal SVF (12 dB/oct) after Vol+Dist, before pan, level
+  and sends, as on the Model:Samples. Bit-transparent at OFF.
+- Four real per-track parameters, k 28-31, at sound-record offsets
+  `0x4c`/`0x4e`/`0x50`/`0x52`:
+  - Cutoff L64..OFF..H63: low-pass 5 Hz-20 kHz, high-pass 5 Hz-19 kHz.
+    CC 74.
+  - Reso, Q 0.5-50. CC 71.
+  - Env: a bipolar amount, restarted by each note.
+  - Env Decay, 5 ms-10 s.
+  - All four are LFO destinations 28-31.
+- Their cost figure: at most ~5,100 instructions per block, all six tracks
+  filtered and modulated.
+
+The build is the step 16 pipeline, now one script:
+- `data-stf/`, from
+  `build.py … -t syntakt-sd-cp-toy-bits-swarm,track-filter`. Patched MAIN
+  OS sha256 `a280f7ca…b5ac`, .syx `75a0243e…49a0`.
+- `scripts/firmware_pipeline.sh data-stf SYX "0 … 10" FILTER=1` runs boot,
+  coverage, capture and state dump. The coverage batch's `FILTER=1` adds
+  cutoff x reso and per-machine filter scenarios.
+- Translation to `aot/build-stf/render.c`: 16,178 instructions, 1,577
+  coverage roots, no new unsupported opcodes.
+- CMake prefers `build-stf`, then `build-st`, then `build`.
+- The installed state is `state-syntakt5-filter`; `state-syntakt5` and
+  `state-stock` are kept.
+
+Checks:
+- Unicorn driven (`driven.py --synth --between`, the capture now also sends
+  CC 74 and 71): 195/200, the same UI-post signature as step 16.
+- AOT replay (`cap-filter`: all six tracks filtered, LP and HP, reso 100,
+  stock and Syntakt machines): 300/300 bit-exact outside the governor's
+  page.
+- AOT driven: 195/200, the same signature.
+
+Plugin:
+- Parameters `fcut`/`freso`/`fenv`/`fdec`. Cutoff shows L/OFF/H, Env shows
+  ±. CC 74/71 route through the CC table. CC 105 also accepts 28-31; the
+  LFO destination list has 18 entries.
+- Each track page gains a full-width **FILTER** section (the window is
+  960x760):
+  - the four knobs;
+  - `FilterScope`, a Codec screen of the response: log frequency, LP or HP
+    magnitude with the resonance peak, flat at OFF, cutoff mark, envelope
+    in the header.
+  - The scope's cutoff law (about 2 semitones a step) and Q law are
+    approximate; the exact table is in the tweak's code.
+- `bench.c`'s mix mode moves the filter too (`BENCH_FILTER`, set by
+  `pgo.sh` for `build-stf`).
+
+CPU (HostTest, 48 kHz / 128, profile-guided build): 6.5 % with the
+filters off. 6.8 % with all six tracks through a resonant low-pass (the
+load test now sends CC 74/71 at the start). auval and all five host tests
+pass.
+
+### The Codec look (Metal Gear Solid, PS1)
+
+- `Retro`:
+  - the Codec palette (phosphor `#8dffb2` on `#040d07`, gunmetal bevels,
+    grey plates);
+  - `codecScreen`, `scanlines`, `labelPlate`, `sevenSeg`, `signalBars`.
+  - The "LCD" colours now are the Codec's: readouts, selected icons and
+    both scopes are scanlined Codec screens.
+- **CodecTempo** replaces the tempo knob and the Host Tempo checkbox:
+  - a TEMPO plate, and a screen with signal bars (the output peak, -48..0
+    dB, from `outputPeak()`, a relaxed atomic set once per callback);
+  - a seven-segment BPM readout with ghost segments, and ◀ ▶ (±1 BPM, shift
+    ±0.1);
+  - drag the screen (1 BPM per 2 px, shift finer);
+  - a HOST plate, lit while following the host; click to toggle.
+- LFO scope HUD: "- TRI - 1 BAR -" title, a rule over the plot, corner
+  brackets, and the destination as a boxed tag on the plot (like the
+  scope's "FLY").
+- The help lookup now works by a `helpId` component property, so the Codec
+  unit and the filter scope have hover help too.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
@@ -830,7 +909,7 @@ at `0x400a7dfe`, a probe around the audio call, and others.
       draw the window at a time span that shows more cycles as the speed
       rises, seamlessly (continuous zoom, not steps), so the drawing itself
       shows the speed in real time.
-   f. **UI: more Metal Gear Solid (PS1) Codec / scope influence** (Jack,
+   f. (first pass done, step 17) **UI: more Metal Gear Solid (PS1) Codec / scope influence** (Jack,
       2026-10-22, two reference screenshots in chat):
       - near-black screens with phosphor-green, scanlined panels;
       - bevelled Codec frames with small grey label plates ("PTT",
@@ -843,7 +922,7 @@ at `0x400a7dfe`, a probe around the audio call, and others.
       big frequency-style readout for tempo, signal bars for levels and
       sends, HUD-style section titles.
 
-   g. **A filter page per track** (Jack, 2026-10-22, next pass). Use
+   g. (done, step 17) **A filter page per track** (Jack, 2026-10-22, next pass). Use
       Modded-Cycles' tested `track-filter` tweak (their notes/47):
       - What it is: a bipolar DJ filter, L64..OFF..H63, a 2-pole
         trapezoidal SVF placed after Vol+Dist. Bit-transparent at OFF.

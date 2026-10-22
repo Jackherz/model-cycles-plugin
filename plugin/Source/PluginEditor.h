@@ -112,6 +112,47 @@ private:
     State shown{};
 };
 
+// The tempo as a Metal Gear Solid Codec: a TEMPO plate, a screen with
+// signal bars (the output level) and a seven-segment readout, arrows that
+// step the tempo, and a HOST plate that follows the host's tempo when lit.
+// Drag the screen up or down to change the tempo.
+class CodecTempo : public juce::Component, private juce::Timer
+{
+public:
+    explicit CodecTempo(CyclesEmuProcessor&);
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+
+private:
+    void timerCallback() override;
+    juce::Rectangle<int> screen() const, left() const, right() const, hostPlate() const;
+    bool following() const;
+    void step(double delta);
+
+    CyclesEmuProcessor& proc;
+    juce::RangedAudioParameter *tempo, *follow;
+    float level = 0.0f;
+    double shownBpm = 0.0, dragStart = 0.0;
+    bool dragging = false;
+};
+
+// The track filter's response on a Codec screen: low-pass or high-pass at
+// the cutoff with its resonance peak, flat when OFF, on a log-frequency
+// scale; the envelope's amount and decay in the header.
+class FilterScope : public juce::Component, private juce::Timer
+{
+public:
+    FilterScope(CyclesEmuProcessor&, int track);
+    void paint(juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+    std::atomic<float>* raw[4];
+    int shown[4] = {-1, -1, -1, -1};
+};
+
 class TrackPage : public juce::Component
 {
 public:
@@ -120,8 +161,9 @@ public:
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
-    Section sound{"SOUND"}, lfo{"LFO"};
+    Section sound{"SOUND"}, lfo{"LFO"}, filter{"FILTER"};
     LfoScope scope;
+    FilterScope filterScope;
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
@@ -177,11 +219,12 @@ private:
     CyclesEmuProcessor& proc;
     retro::Look look;
     std::vector<std::unique_ptr<ParamControl>> globals;
+    CodecTempo codecTempo{proc};
     juce::Label status;
     juce::TextButton helpButton{"?"};
     HelpBubble bubble;
     bool helpMode = false;
-    ParamControl* helpTarget = nullptr;
+    juce::Component* helpTarget = nullptr;
     juce::OwnedArray<juce::TextButton> tabs;
     juce::OwnedArray<juce::Component> pages;
     int current = 0;

@@ -25,7 +25,7 @@ enum class Kind
 };
 
 // How the editor and the host show its value.
-enum class Show { Plain, Bipolar, Semitones, Pan };
+enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff };
 
 struct ParamDef
 {
@@ -44,7 +44,8 @@ extern const ParamDef kFxParams[];
 extern const int kNumFxParams;
 
 extern const juce::StringArray kMachineNames, kLfoWaveNames, kLfoTrigNames, kLfoMultNames, kLfoDestNames;
-extern const int kLfoDestValues[14];
+constexpr int kNumLfoDests = 18;
+extern const int kLfoDestValues[kNumLfoDests];
 
 juce::String paramId(int track, const char* id);   // "t1_decay", "fx_delaytime", "midimode"
 } // namespace cyclesemu
@@ -77,6 +78,8 @@ public:
     juce::AudioProcessorValueTreeState& state() { return apvts; }
     const juce::String& engineStatus() const { return engineError; }
     double currentBpm() const { return shownBpm.load(); }
+    // the output's peak over the last callback (0..), for the editor's meter
+    float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
 
 private:
     struct Slot
@@ -118,6 +121,7 @@ private:
     std::atomic<float>* followHost = nullptr;
     double targetBpm = 120.0, appliedBpm = 0.0;
     std::atomic<double> shownBpm{120.0};
+    std::atomic<float> outPeak{0.0f};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CyclesEmuProcessor)
 };

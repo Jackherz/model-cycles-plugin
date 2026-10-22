@@ -83,6 +83,11 @@ int main(int argc, char **argv)
                 mc_engine_param(g, t, 0x18, (k + t) % 24);                  /* multiplier */
                 mc_engine_param(g, t, 0x3c, (k * 13 + t * 31) % 128);
                 mc_engine_param(g, t, 0x3e, (k * 7 + t * 19) % 128);
+                if (getenv("BENCH_FILTER")) {     /* the track filter (k 28-31) */
+                    mc_engine_param(g, t, 0x4c, (k * 23 + t * 37) % 128);
+                    mc_engine_param(g, t, 0x4e, (k * 11 + t * 5) % 128);
+                    mc_engine_param(g, t, 0x50, (k * 17 + t * 29) % 128);
+                }
             }
         if (b % 375 == 0)                  /* every 0.25 s */
             for (int t = 0; t < 6; t++)

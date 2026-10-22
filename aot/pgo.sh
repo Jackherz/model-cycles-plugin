@@ -15,7 +15,8 @@ clang -O2 -fprofile-instr-generate -Wno-parentheses-equality \
 rm -f $B/pgo-*.profraw(N)
 LLVM_PROFILE_FILE=$B/pgo-chord.profraw $B/bench-gen "$S" 10 || exit 1
 # every machine the build has: 11 with the Syntakt engines (build-st)
-M=6; [[ $B == *-st ]] && M=11
+M=6; [[ $B == *-st* ]] && M=11
+[[ $B == *-stf ]] && export BENCH_FILTER=1
 BENCH_MODE=mix BENCH_MACHINES=$M LLVM_PROFILE_FILE=$B/pgo-mix.profraw $B/bench-gen "$S" 44 || exit 1
 BENCH_MODE=kit LLVM_PROFILE_FILE=$B/pgo-kit.profraw $B/bench-gen "$S" 10 || exit 1
 xcrun llvm-profdata merge -o $B/render.profdata $B/pgo-*.profraw && echo "-> $B/render.profdata"

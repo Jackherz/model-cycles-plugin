@@ -166,6 +166,117 @@ juce::Colour accentFor(const juce::Component& c)
     return kNavy;
 }
 
+juce::Rectangle<int> codecScreen(juce::Graphics& g, juce::Rectangle<int> r, int frame)
+{
+    // the bevel: light top-left, dark bottom-right, gunmetal between
+    g.setColour(kGunmetal);
+    g.fillRect(r);
+    for (int i = 0; i < frame; ++i)
+    {
+        auto e = r.reduced(i);
+        g.setColour(i == 0 ? kGunLight : kGunmetal.brighter(0.15f));
+        g.fillRect(e.getX(), e.getY(), e.getWidth() - 1, 1);
+        g.fillRect(e.getX(), e.getY(), 1, e.getHeight() - 1);
+        g.setColour(i == 0 ? kGunDark : kGunmetal.darker(0.4f));
+        g.fillRect(e.getX(), e.getBottom() - 1, e.getWidth(), 1);
+        g.fillRect(e.getRight() - 1, e.getY(), 1, e.getHeight());
+    }
+    auto in = r.reduced(frame);
+    g.setColour(kGunDark);
+    g.drawRect(in, 1);
+    in = in.reduced(1);
+    g.setColour(kCodecBg);
+    g.fillRect(in);
+    return in;
+}
+
+void scanlines(juce::Graphics& g, juce::Rectangle<int> in)
+{
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    for (int y = in.getY() + 1; y < in.getBottom(); y += 2)
+        g.fillRect(in.getX(), y, in.getWidth(), 1);
+}
+
+void labelPlate(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, bool lit)
+{
+    g.setColour(lit ? kCodecBg : kPlate);
+    g.fillRect(r);
+    g.setColour(lit ? kPhosphorDim : kGunLight.brighter(0.4f));
+    g.fillRect(r.getX(), r.getY(), r.getWidth(), 1);
+    g.setColour(kGunDark);
+    g.fillRect(r.getX(), r.getBottom() - 1, r.getWidth(), 1);
+    g.drawRect(r.expanded(1), 1);
+    drawText(g, text, r, juce::Justification::centred, lit ? kPhosphor : kPlateText);
+    if (lit)
+        scanlines(g, r.reduced(1));
+}
+
+namespace
+{
+// segments a..g of each digit, bit 0 = a (top) .. bit 6 = g (middle)
+int segmentsFor(juce::juce_wchar ch)
+{
+    static const int digits[10] = {0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f};
+    if (ch >= '0' && ch <= '9')
+        return digits[ch - '0'];
+    if (ch == '-')
+        return 0x40;
+    return 0;
+}
+} // namespace
+
+int sevenSegWidth(const juce::String& text, int h)
+{
+    const int w = h / 2 + 2, gap = juce::jmax(2, h / 8);
+    int total = 0;
+    for (auto ch : text)
+        total += (ch == '.' ? gap + 2 : w + gap);
+    return total - gap;
+}
+
+void sevenSeg(juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area, int h, juce::Colour on,
+              juce::Colour off)
+{
+    const int w = h / 2 + 2, t = juce::jmax(2, h / 8), gap = t;
+    int x = area.getCentreX() - sevenSegWidth(text, h) / 2, y = area.getCentreY() - h / 2;
+    const int mid = y + h / 2 - t / 2;
+    for (auto ch : text)
+    {
+        if (ch == '.')
+        {
+            g.setColour(on);
+            g.fillRect(x, y + h - t, t, t);
+            x += t + 2;
+            continue;
+        }
+        const int s = segmentsFor(ch);
+        // a, b, c, d, e, f, g as rectangles
+        const juce::Rectangle<int> seg[7] = {
+            {x + t, y, w - 2 * t, t},       {x + w - t, y + t, t, mid - y - t},
+            {x + w - t, mid + t, t, y + h - t - mid - t}, {x + t, y + h - t, w - 2 * t, t},
+            {x, mid + t, t, y + h - t - mid - t}, {x, y + t, t, mid - y - t},
+            {x + t, mid, w - 2 * t, t}};
+        for (int i = 0; i < 7; ++i)
+        {
+            g.setColour((s >> i) & 1 ? on : off);
+            g.fillRect(seg[i]);
+        }
+        x += w + gap;
+    }
+}
+
+void signalBars(juce::Graphics& g, juce::Rectangle<int> r, int bars, float level, juce::Colour on, juce::Colour off)
+{
+    // the Codec's staircase: each bar a little taller, lit from the left
+    const int bw = juce::jmax(2, r.getWidth() / bars - 2);
+    for (int i = 0; i < bars; ++i)
+    {
+        const int h = juce::jmax(2, r.getHeight() * (i + 1) / bars);
+        g.setColour((float)(i + 1) / (float)bars <= level + 1e-4f ? on : off);
+        g.fillRect(r.getX() + i * (bw + 2), r.getBottom() - h, bw, h);
+    }
+}
+
 void raised(juce::Graphics& g, juce::Rectangle<int> r, bool thick)
 {
     g.setColour(kLight);
@@ -333,11 +444,10 @@ void Look::drawLabel(juce::Graphics& g, juce::Label& l)
     auto r = l.getLocalBounds();
     if (dynamic_cast<juce::Slider*>(parent) != nullptr)
     {
-        // value readout: a little black LCD, green pixel text
-        sunken(g, r, false);
-        g.setColour(kLcd);
-        g.fillRect(r.reduced(1));
-        drawText(g, l.getText(), r.reduced(3, 0), juce::Justification::centred, kLcdText);
+        // value readout: a small Codec screen
+        auto in = codecScreen(g, r, 1);
+        drawText(g, l.getText(), in.reduced(2, 0), juce::Justification::centred, kPhosphor);
+        scanlines(g, in);
         return;
     }
     if (dynamic_cast<juce::ComboBox*>(parent) != nullptr)

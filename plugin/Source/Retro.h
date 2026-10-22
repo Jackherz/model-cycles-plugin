@@ -10,10 +10,18 @@ namespace retro
 // Windows 95 greys and the N64 logo's four colours.
 const juce::Colour kFace(0xffc0c0c0), kLight(0xffffffff), kShadow(0xff808080), kDark(0xff000000),
     kHilite(0xffdfdfdf), kNavy(0xff000080), kTitleEnd(0xff1084d0), kDesktop(0xff008080),
-    kField(0xffffffff), kLcd(0xff0b140d), kLcdText(0xff3cff6e), kText(0xff000000), kDimText(0xff505050);
+    kField(0xffffffff), kText(0xff000000), kDimText(0xff505050);
 const juce::Colour kAccents[] = {juce::Colour(0xffe2231a), juce::Colour(0xfff6b800), juce::Colour(0xff009e49),
                                  juce::Colour(0xff0057b7), juce::Colour(0xff7a3fbf), juce::Colour(0xffe2231a),
                                  juce::Colour(0xff4a4a4a)};   // tracks 1-6, FX
+
+// Metal Gear Solid's Codec: phosphor green on near-black, in a gunmetal
+// bevel, with grey label plates.
+const juce::Colour kCodecBg(0xff040d07), kPhosphor(0xff8dffb2), kPhosphorDim(0xff2f7a4c),
+    kPhosphorFaint(0xff12321f), kGunmetal(0xff3a403c), kGunLight(0xff6c766f), kGunDark(0xff141816),
+    kPlate(0xff9aa39c), kPlateText(0xff1c221e);
+// the LCDs (readouts, selected icons, the LFO display) are Codec screens
+const juce::Colour kLcd = kCodecBg, kLcdText = kPhosphor;
 
 constexpr int kPx = 2;   // one font pixel in screen pixels
 
@@ -34,6 +42,19 @@ void drawWrapped(juce::Graphics&, const juce::String& s, juce::Rectangle<int> ar
 int wrappedHeight(const juce::String& s, int width, int scale = kPx);
 // The "accent" property of c or its nearest ancestor that has one.
 juce::Colour accentFor(const juce::Component& c);
+// Darken every other row of `in` (the Codec's scanlines).
+void scanlines(juce::Graphics&, juce::Rectangle<int> in);
+// A Codec screen: gunmetal bevel (`frame` px), near-black inside, a
+// scanline every other row. Returns the inside.
+juce::Rectangle<int> codecScreen(juce::Graphics&, juce::Rectangle<int>, int frame = 3);
+// A grey label plate ("PTT", "MEMORY"); lit draws it phosphor on black.
+void labelPlate(juce::Graphics&, juce::Rectangle<int>, const juce::String& text, bool lit = false);
+// Seven-segment digits ("120.00"), blocky; digit height h, centred in area.
+void sevenSeg(juce::Graphics&, const juce::String& text, juce::Rectangle<int> area, int h, juce::Colour on,
+              juce::Colour off);
+int sevenSegWidth(const juce::String& text, int h);
+// Signal bars rising left to right, lit up to level (0..1).
+void signalBars(juce::Graphics&, juce::Rectangle<int>, int bars, float level, juce::Colour on, juce::Colour off);
 // A gradient from a to b, left to right, through a 4x4 Bayer dither in
 // blocks of `cell` pixels (the PS1's look).
 void ditherGradient(juce::Graphics&, juce::Rectangle<int>, juce::Colour a, juce::Colour b, int cell = kPx);

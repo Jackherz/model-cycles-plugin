@@ -22,11 +22,14 @@ FetchContent_Declare(juce
 FetchContent_MakeAvailable(juce)
 
 set(AOT ${CMAKE_CURRENT_SOURCE_DIR}/../aot)
-# Which render: build-st (Model:Cycles with the Syntakt engines, NOTES.md
-# step 16) when it has been made, else build (stock 1.13). Its engine state
-# must match: ~/Library/Application Support/CyclesEmu/state.
+# Which render: build-stf (the Syntakt engines and the track filter, NOTES.md
+# step 17), else build-st (the Syntakt engines, step 16), else build (stock
+# 1.13), whichever has been made. Its engine state must match:
+# ~/Library/Application Support/CyclesEmu/state.
 if(NOT DEFINED MC_BUILD)
-    if(EXISTS ${AOT}/build-st/render.c)
+    if(EXISTS ${AOT}/build-stf/render.c)
+        set(MC_BUILD build-stf)
+    elseif(EXISTS ${AOT}/build-st/render.c)
         set(MC_BUILD build-st)
     else()
         set(MC_BUILD build)

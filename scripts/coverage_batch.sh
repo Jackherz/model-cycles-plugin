@@ -34,6 +34,18 @@ for m in $MACHINES; do
       --cc all:66:$((v > 63)) --cc all:16:$v --retrig all:48:110 --instrs 10M
   done
 done
+# the per-track filter (FILTER=1, Modded-Cycles' track-filter): cutoff CC 74
+# (0 = L64 .. 64 = OFF .. 127 = H63) at three resonances (CC 71)
+if [[ -n $FILTER ]]; then
+  for f in 0 24 56 64 72 104 127; do
+    for q in 0 64 127; do
+      run --label "filter f$f q$q" --cc all:74:$f --cc all:71:$q $FX --retrig all:48:110 --instrs 8M
+    done
+  done
+  for m in $MACHINES; do
+    run --label "filter mach$m" --cc all:70:$m --cc all:74:30 --cc all:71:90 --retrig all:60:120 --instrs 6M
+  done
+fi
 run --label "punch gate" --cc all:66:1 --cc all:67:1 --retrig all:60:127 --instrs 8M
 run --label "pitch lo" --cc all:65:0 --cc all:18:127 --cc all:19:127 --retrig all:30:127 --instrs 8M
 run --label "pitch hi" --cc all:65:127 --cc all:18:0 --cc all:19:0 --retrig all:90:1 --instrs 8M
