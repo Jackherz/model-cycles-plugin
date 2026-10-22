@@ -158,6 +158,26 @@ int wrappedHeight(const juce::String& s, int width, int scale)
     return n == 0 ? 0 : n * lineStep(scale) - 3 * scale;
 }
 
+static float luminance(juce::Colour c)
+{
+    auto lin = [](float v) { return v <= 0.03928f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+    return 0.2126f * lin(c.getFloatRed()) + 0.7152f * lin(c.getFloatGreen()) + 0.0722f * lin(c.getFloatBlue());
+}
+
+float contrast(juce::Colour a, juce::Colour b)
+{
+    const float la = luminance(a), lb = luminance(b);
+    return (juce::jmax(la, lb) + 0.05f) / (juce::jmin(la, lb) + 0.05f);
+}
+
+juce::Colour readableOn(juce::Colour c, juce::Colour bg, float minRatio)
+{
+    const bool darkBg = luminance(bg) < 0.18f;
+    for (int i = 0; i < 24 && contrast(c, bg) < minRatio; ++i)
+        c = darkBg ? c.brighter(0.15f) : c.darker(0.15f);
+    return c;
+}
+
 juce::Colour accentFor(const juce::Component& c)
 {
     for (auto* p = &c; p != nullptr; p = p->getParentComponent())
@@ -427,14 +447,33 @@ void Look::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float
     bool bipolar = s.getMinimum() == 0 && s.getMaximum() == 127 && s.getTextFromValue(64.0).trim() == "0";
     const int ticks = 15;
     float centre = (start + end) * 0.5f, value = start + pos * (end - start);
+    struct
+    {
+        juce::Colour fill, ink;
+    } lit{readableOn(accentFor(s), kFace, 2.0f), contrast(kFace, juce::Colours::black) >= 7.0f
+                                                ? juce::Colours::black
+                                                : juce::Colour(0xfff4f4f4)};
     for (int i = 0; i < ticks; ++i)
     {
         float a = start + (end - start) * (float)i / (float)(ticks - 1);
         bool on = bipolar ? (a >= juce::jmin(centre, value) - 1e-4f && a <= juce::jmax(centre, value) + 1e-4f)
                           : a <= value + 1e-4f;
         float tx = cx + (R - 3.0f) * std::sin(a), ty = cy - (R - 3.0f) * std::cos(a);
-        g.setColour(on ? accentFor(s) : kShadow);
-        g.fillRect(juce::Rectangle<float>(tx - 2.0f, ty - 2.0f, 4.0f, 4.0f).toNearestInt());
+        auto px = juce::Rectangle<float>(tx - 2.0f, ty - 2.0f, 4.0f, 4.0f).toNearestInt();
+        if (on)
+        {
+            // lit: the track's colour, made readable on this scheme, in an
+            // ink outline (black, or white on a dark face)
+            g.setColour(lit.ink);
+            g.fillRect(px.expanded(1));
+            g.setColour(lit.fill);
+            g.fillRect(px);
+        }
+        else
+        {
+            g.setColour(kShadow);   // unlit: a small dot, so lit reads by shape too
+            g.fillRect(px.withSizeKeepingCentre(2, 2));
+        }
     }
     float r = R - 9.0f;
     juce::Path oct;

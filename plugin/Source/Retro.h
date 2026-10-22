@@ -50,6 +50,11 @@ void groupBox(juce::Graphics&, juce::Rectangle<int>, const juce::String& title, 
 // Word-wrapped pixel text, top-left aligned.
 void drawWrapped(juce::Graphics&, const juce::String& s, juce::Rectangle<int> area, juce::Colour, int scale = kPx);
 int wrappedHeight(const juce::String& s, int width, int scale = kPx);
+// WCAG contrast ratio of two colours (1..21).
+float contrast(juce::Colour a, juce::Colour b);
+// c darkened (on a light bg) or lightened (on a dark one) until its contrast
+// with bg reaches minRatio: a track colour that still reads on any scheme.
+juce::Colour readableOn(juce::Colour c, juce::Colour bg, float minRatio = 3.0f);
 // The "accent" property of c or its nearest ancestor that has one.
 juce::Colour accentFor(const juce::Component& c);
 // Darken every other row of `in` (the Codec's scanlines).

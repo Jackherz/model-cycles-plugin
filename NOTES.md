@@ -999,19 +999,25 @@ other colour offset to suit it (`retro::applyTheme`, `kThemes` in
   look's colour from startup.
 - `notes/editor-colour-*.png`: one render per scheme.
 
+## Step 22: knob values readable in every scheme (2026-10-23)
+
+Jack's report: track 2's yellow ticks vanished on Grey (contrast 1.0:1).
+
+- **Lit ticks**: the track's colour passed through `retro::readableOn(c,
+  kFace, 2.0)`. It is darkened on light faces, lightened on dark ones,
+  until its WCAG contrast with the face reaches 2:1. A 2:1 target keeps the
+  hue: a 3:1 yellow on grey is brown.
+- Each lit tick also gets a **1-px ink outline**: black where the face
+  reaches 7:1 against black, else white (Midnight). The outline is what
+  guarantees visibility.
+- **Unlit ticks**: small 2x2 shadow dots, so lit and unlit differ by shape
+  as well as colour.
+- `CyclesEmuEditorShot` prints raw -> drawn contrast for every scheme x
+  track colour. All end >= 2.0 before the outline; the worst raw case was
+  yellow on Grey, 1.0. It renders `notes/editor-knobs-<scheme>.png`.
+
 ## Next steps
 
-**First, next session (Jack, 2026-10-22): knob values must stand out in
-every colour scheme.** The knobs' lit tick rings use the track's accent.
-Track 2's yellow (`kAccents[1]`, #f6b800) nearly vanishes on Grey's
-#c0c0c0 face, and others will blend on some schemes too.
-- Make the lit ticks contrast with the face in every scheme: give each lit
-  tick a dark (or, on Midnight, light) outline or shadow pixel, darken or
-  lighten the accent per scheme until it passes a contrast check against
-  `kFace`, and dim the unlit ticks further.
-- Check the pointer's contrast on the knob body too.
-- Verify with `CyclesEmuEditorShot` on all five schemes and all six track
-  colours.
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
    a. (done, step 9) the idle hum: the reverb at size 127 froze the

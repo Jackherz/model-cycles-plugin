@@ -235,6 +235,29 @@ int main(int argc, char** argv)
     }
     retro::applyTheme(0);
 
+    // knob ticks: each track colour against each scheme's face, before and
+    // after readableOn; and track 2 (yellow) on every scheme
+    std::printf("tick contrast (raw -> drawn), tracks 1-6:\n");
+    e->showPage(1);
+    for (int i = 0; i < retro::kNumThemes; ++i)
+    {
+        retro::applyTheme(i);
+        std::printf("  %-9s", retro::kThemeNames[i]);
+        for (int t = 0; t < 6; ++t)
+        {
+            auto a = retro::kAccents[t];
+            std::printf(" %4.1f->%4.1f", retro::contrast(a, retro::kFace),
+                        retro::contrast(retro::readableOn(a, retro::kFace, 2.0f), retro::kFace));
+        }
+        std::printf("\n");
+        auto img = e->createComponentSnapshot({20, 290, 560, 260}, true, 1.0f);
+        auto f = out.getChildFile(juce::String("editor-knobs-") + retro::kThemeNames[i] + ".png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+    retro::applyTheme(0);
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
