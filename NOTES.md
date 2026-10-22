@@ -843,6 +843,26 @@ at `0x400a7dfe`, a probe around the audio call, and others.
       big frequency-style readout for tempo, signal bars for levels and
       sends, HUD-style section titles.
 
+   g. **A filter page per track** (Jack, 2026-10-22, next pass). Use
+      Modded-Cycles' tested `track-filter` tweak (their notes/47):
+      - What it is: a bipolar DJ filter, L64..OFF..H63, a 2-pole
+        trapezoidal SVF placed after Vol+Dist. Bit-transparent at OFF.
+        Parameters: resonance (Q 0.5-50), a bipolar envelope amount, and the
+        envelope's decay (5 ms-10 s, restarted by each note).
+      - Four real per-track parameters: k 28-31, CC 74 (cutoff) and CC 71
+        (reso), NRPN 1:20/1:21. They work as LFO destinations too.
+      - Cost: at most ~5,100 instructions per block with all six tracks
+        filtered and modulated (their §9), about +6 % engine time.
+      - Builds with the Syntakt engines: `-t
+        syntakt-sd-cp-toy-bits-swarm,track-filter` (checked 2026-10-22).
+      - Steps: rebuild `data-st` with both tweaks, then the step 16
+        pipeline (boot, coverage with filter scenarios, capture, check,
+        translate, pgo).
+      - Plugin: a FILTER section per track (cutoff, reso, env, decay; a
+        filter-response display like the LFO's), engine params at the new
+        record offsets, CC 74/71, and LFO destinations if the tweak adds
+        them to the LFO's list.
+
 Future ideas (Jack, 2026-10-22): make it its own instrument rather than an
 Elektron copy, for future builds; not scheduled yet.
 - **Vector morphing**: take one sound and morph it into another, like a
