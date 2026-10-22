@@ -969,6 +969,36 @@ pass.
     `defaults.json`;
   - a randomised kit reset: identical to the new kit.
 
+## Step 21: colour schemes (2026-10-22)
+
+**View** menu: five schemes, each chosen by its background, with every
+other colour offset to suit it (`retro::applyTheme`, `kThemes` in
+`Retro.cpp`):
+- the bevels' light, highlight and shadow from the face;
+- readable text and fields;
+- a title bar and selection colour that sit with the face;
+- Codec screens in a complementary phosphor, with matching gunmetal and
+  plates.
+
+| Scheme | Face | Title | Screens |
+|---|---|---|---|
+| Grey | Win95 standard | navy | green |
+| Desert | sand | teal | amber |
+| Lilac | lavender | violet | cyan |
+| Slate | blue-grey | deep blue | lime |
+| Midnight | dark, with light text and dark fields | indigo | pink |
+
+- The tracks' N64 colours and the yellow help bubble (dark text) stay the
+  same in every scheme.
+- The palette is shared `inline` colours read at paint time, so a change
+  repaints everything.
+- The choice is a preference for all instances, not part of a session:
+  `~/Library/Application Support/CyclesEmu/CyclesEmu.settings`, applied
+  before the editor first paints.
+- Plain labels now take the scheme's text colour at paint time, not the
+  look's colour from startup.
+- `notes/editor-colour-*.png`: one render per scheme.
+
 ## Next steps
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):

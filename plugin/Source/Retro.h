@@ -7,21 +7,31 @@
 
 namespace retro
 {
-// Windows 95 greys and the N64 logo's four colours.
-const juce::Colour kFace(0xffc0c0c0), kLight(0xffffffff), kShadow(0xff808080), kDark(0xff000000),
+// The colour scheme: Windows 95 greys by default. These are shared and set
+// by applyTheme (one of five schemes, each derived from its background
+// colour); drawing reads them at paint time.
+inline juce::Colour kFace(0xffc0c0c0), kLight(0xffffffff), kShadow(0xff808080), kDark(0xff000000),
     kHilite(0xffdfdfdf), kNavy(0xff000080), kTitleEnd(0xff1084d0), kDesktop(0xff008080),
-    kField(0xffffffff), kText(0xff000000), kDimText(0xff505050);
+    kField(0xffffffff), kText(0xff000000), kDimText(0xff505050),
+    kTitleText(0xffffffff), kSelect(0xff000080);   // text on the title bar / a selection
+// The N64 logo's four colours and two more: the tracks' own, in every scheme.
 const juce::Colour kAccents[] = {juce::Colour(0xffe2231a), juce::Colour(0xfff6b800), juce::Colour(0xff009e49),
                                  juce::Colour(0xff0057b7), juce::Colour(0xff7a3fbf), juce::Colour(0xffe2231a),
                                  juce::Colour(0xff4a4a4a)};   // tracks 1-6, FX
 
 // Metal Gear Solid's Codec: phosphor green on near-black, in a gunmetal
 // bevel, with grey label plates.
-const juce::Colour kCodecBg(0xff040d07), kPhosphor(0xff8dffb2), kPhosphorDim(0xff2f7a4c),
+inline juce::Colour kCodecBg(0xff040d07), kPhosphor(0xff8dffb2), kPhosphorDim(0xff2f7a4c),
     kPhosphorFaint(0xff12321f), kGunmetal(0xff3a403c), kGunLight(0xff6c766f), kGunDark(0xff141816),
     kPlate(0xff9aa39c), kPlateText(0xff1c221e);
 // the LCDs (readouts, selected icons, the LFO display) are Codec screens
-const juce::Colour kLcd = kCodecBg, kLcdText = kPhosphor;
+inline juce::Colour kLcd = kCodecBg, kLcdText = kPhosphor;
+
+// The five schemes: Grey (Win95's own), Desert, Lilac, Slate, Midnight.
+constexpr int kNumThemes = 5;
+extern const char* const kThemeNames[kNumThemes];
+void applyTheme(int index);
+int currentTheme();
 
 constexpr int kPx = 2;   // one font pixel in screen pixels
 

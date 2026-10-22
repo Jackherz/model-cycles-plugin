@@ -166,6 +166,61 @@ juce::Colour accentFor(const juce::Component& c)
     return kNavy;
 }
 
+const char* const kThemeNames[kNumThemes] = {"Grey", "Desert", "Lilac", "Slate", "Midnight"};
+
+namespace
+{
+// Each scheme starts from its background (face) and offsets the rest to
+// suit it: bevels from the face, readable text and fields, a title bar and
+// selection that sit with it, and Codec screens in a complementary phosphor.
+struct Theme
+{
+    juce::uint32 face, light, hilite, shadow, dark, text, dim, field, title, titleEnd, titleText, select, desktop;
+    juce::uint32 codecBg, phosphor, phosphorDim, phosphorFaint, gun, gunLight, gunDark, plate, plateText;
+};
+const Theme kThemes[kNumThemes] = {
+    // Grey: Windows 95 Standard, green phosphor
+    {0xffc0c0c0, 0xffffffff, 0xffdfdfdf, 0xff808080, 0xff000000, 0xff000000, 0xff505050, 0xffffffff, 0xff000080,
+     0xff1084d0, 0xffffffff, 0xff000080, 0xff008080, 0xff040d07, 0xff8dffb2, 0xff2f7a4c, 0xff12321f, 0xff3a403c,
+     0xff6c766f, 0xff141816, 0xff9aa39c, 0xff1c221e},
+    // Desert: sand, a teal title, amber screens
+    {0xffd5ccbb, 0xffffffff, 0xffe9e3d7, 0xffa2967f, 0xff000000, 0xff000000, 0xff5c5446, 0xfffffdf6, 0xff006e6e,
+     0xff3aa7a0, 0xffffffff, 0xff006e6e, 0xffa2967f, 0xff120a02, 0xffffbb4f, 0xff8a5a1c, 0xff3a2508, 0xff4a4238,
+     0xff7a6e5e, 0xff1c1812, 0xffb8ad98, 0xff2a2418},
+    // Lilac: lavender, a violet title, cyan screens
+    {0xffaea8d9, 0xffffffff, 0xffd4d0ec, 0xff6f66a8, 0xff000000, 0xff000000, 0xff3e3866, 0xffffffff, 0xff5a4e9e,
+     0xff9a8fd8, 0xffffffff, 0xff5a4e9e, 0xff6f66a8, 0xff04090d, 0xff8ff0ff, 0xff2f6e7a, 0xff12303a, 0xff3c3a4c,
+     0xff6c6884, 0xff16151e, 0xffa49ec0, 0xff1c1a28},
+    // Slate: blue-grey, a deep blue title, lime screens
+    {0xff94a6b8, 0xffe4ebf2, 0xffbccad7, 0xff5a6a7c, 0xff000000, 0xff000000, 0xff2c3846, 0xfff4f7fa, 0xff1f3550,
+     0xff5a7894, 0xffffffff, 0xff1f3550, 0xff5a6a7c, 0xff070b04, 0xffc8ff6a, 0xff5a7a2a, 0xff1e2a10, 0xff34404c,
+     0xff66788a, 0xff141a20, 0xff9aaabb, 0xff18202a},
+    // Midnight: a dark face with light text, indigo title, pink screens
+    {0xff3a3e48, 0xff6e7690, 0xff50566a, 0xff22252c, 0xff0a0b0e, 0xffe6e8ee, 0xff9aa0b0, 0xff23262e, 0xff101830,
+     0xff34489a, 0xffffffff, 0xff3a5ab0, 0xff22252c, 0xff0a040a, 0xffff9ae0, 0xff7a3a68, 0xff2a1226, 0xff2a2d36,
+     0xff50566a, 0xff0c0d10, 0xff5a6070, 0xffe6e8ee},
+};
+int themeNow = 0;
+} // namespace
+
+void applyTheme(int index)
+{
+    themeNow = juce::jlimit(0, kNumThemes - 1, index);
+    const auto& t = kThemes[themeNow];
+    kFace = juce::Colour(t.face), kLight = juce::Colour(t.light), kHilite = juce::Colour(t.hilite);
+    kShadow = juce::Colour(t.shadow), kDark = juce::Colour(t.dark), kText = juce::Colour(t.text);
+    kDimText = juce::Colour(t.dim), kField = juce::Colour(t.field), kNavy = juce::Colour(t.title);
+    kTitleEnd = juce::Colour(t.titleEnd), kTitleText = juce::Colour(t.titleText), kSelect = juce::Colour(t.select);
+    kDesktop = juce::Colour(t.desktop);
+    kCodecBg = juce::Colour(t.codecBg), kPhosphor = juce::Colour(t.phosphor);
+    kPhosphorDim = juce::Colour(t.phosphorDim), kPhosphorFaint = juce::Colour(t.phosphorFaint);
+    kGunmetal = juce::Colour(t.gun), kGunLight = juce::Colour(t.gunLight), kGunDark = juce::Colour(t.gunDark);
+    kPlate = juce::Colour(t.plate), kPlateText = juce::Colour(t.plateText);
+    kLcd = kCodecBg, kLcdText = kPhosphor;
+}
+
+int currentTheme() { return themeNow; }
+
 juce::Rectangle<int> codecScreen(juce::Graphics& g, juce::Rectangle<int> r, int frame)
 {
     // the bevel: light top-left, dark bottom-right, gunmetal between
@@ -542,7 +597,7 @@ void Look::drawLabel(juce::Graphics& g, juce::Label& l)
         return;
     }
     auto j = l.getJustificationType();
-    drawText(g, l.getText(), r, j, l.findColour(juce::Label::textColourId));
+    drawText(g, l.getText(), r, j, kText);   // the scheme's, read at paint time
 }
 
 void Look::drawComboBox(juce::Graphics& g, int w, int h, bool, int bx, int by, int bw, int bh, juce::ComboBox&)
@@ -594,10 +649,10 @@ void Look::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area
     }
     if (highlighted && active)
     {
-        g.setColour(kNavy);
+        g.setColour(kSelect);
         g.fillRect(r);
     }
-    auto c = !active ? kShadow : highlighted ? kLight : kText;
+    auto c = !active ? kShadow : highlighted ? kTitleText : kText;
     if (ticked)
         drawText(g, "*", r.getX() + 4, r.getCentreY() - 7, c);
     drawText(g, text, r.withTrimmedLeft(20), juce::Justification::centredLeft, c);

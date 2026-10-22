@@ -222,6 +222,19 @@ int main(int argc, char** argv)
             std::printf("no Decay readout found\n");
     }
 
+    // the five colour schemes, on track 1 (applied directly: no settings file)
+    e->showPage(0);
+    for (int i = 0; i < retro::kNumThemes; ++i)
+    {
+        retro::applyTheme(i);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile(juce::String("editor-colour-") + retro::kThemeNames[i] + ".png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+    retro::applyTheme(0);
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

@@ -239,7 +239,8 @@ public:
 private:
     void timerCallback() override;
     void setHelpMode(bool on);
-    juce::PopupMenu kitMenu(), trackMenu(), helpMenu();
+    juce::PopupMenu kitMenu(), trackMenu(), viewMenu(), helpMenu();
+    void setTheme(int index);
     void chooseFile(bool kits, bool saving);
     void randomiseTrack(cyclesemu::RandomSection, bool variation);
     void updateHelp(juce::Component* under);

@@ -712,11 +712,11 @@ void MenuStrip::paint(juce::Graphics& g)
         auto r = itemArea(i);
         if (i == open)
         {
-            g.setColour(kNavy);
+            g.setColour(kSelect);
             g.fillRect(r.reduced(0, 1));
         }
         // Win95 underlines the access letter
-        const auto c = i == open ? kLight : kText;
+        const auto c = i == open ? kTitleText : kText;
         drawText(g, menus[(size_t)i].name, r, juce::Justification::centred, c);
         g.setColour(c);
         g.fillRect(r.getCentreX() - textWidth(menus[(size_t)i].name) / 2, r.getCentreY() + 8, 10, 1);
@@ -802,6 +802,37 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
     return m;
 }
 
+// The colour scheme is a preference shared by every instance, kept in
+// ~/Library/Application Support/CyclesEmu/CyclesEmu.settings.
+static juce::PropertiesFile& settings()
+{
+    static juce::PropertiesFile file([] {
+        juce::PropertiesFile::Options o;
+        o.applicationName = "CyclesEmu";
+        o.filenameSuffix = "settings";
+        o.folderName = "CyclesEmu";
+        o.osxLibrarySubFolder = "Application Support";
+        return o;
+    }());
+    return file;
+}
+
+juce::PopupMenu CyclesEmuEditor::viewMenu()
+{
+    juce::PopupMenu m;
+    for (int i = 0; i < kNumThemes; ++i)
+        m.addItem(juce::String("Colour: ") + kThemeNames[i], true, currentTheme() == i, [this, i] { setTheme(i); });
+    return m;
+}
+
+void CyclesEmuEditor::setTheme(int index)
+{
+    applyTheme(index);
+    settings().setValue("theme", index);
+    settings().saveIfNeeded();
+    repaint();   // every child repaints with it
+}
+
 juce::PopupMenu CyclesEmuEditor::helpMenu()
 {
     juce::PopupMenu m;
@@ -862,6 +893,7 @@ void CyclesEmuEditor::chooseFile(bool kits, bool saving)
 
 CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p), proc(p)
 {
+    applyTheme(settings().getIntValue("theme", 0));
     setLookAndFeel(&look);
     setAccent(*this, kNavy);
     auto& st = p.state();
@@ -876,6 +908,7 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     addAndMakeVisible(codecTempo);   // tempo and host tempo
     menuBar.menus = {{"Kit", [this] { return kitMenu(); }},
                      {"Track", [this] { return trackMenu(); }},
+                     {"View", [this] { return viewMenu(); }},
                      {"Help", [this] { return helpMenu(); }}};
     addAndMakeVisible(menuBar);
     status.setJustificationType(juce::Justification::centredLeft);
@@ -946,7 +979,7 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
         g.setColour(kAccents[i]);
         g.fillRect(kTitle.getX() + 4 + (i % 2) * 7, kTitle.getY() + 4 + (i / 2) * 7, 6, 6);
     }
-    drawText(g, "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4, kLight);
+    drawText(g, "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4, kTitleText);
     auto caps = kTitle.withTrimmedRight(3).withSizeKeepingCentre(kTitle.getWidth() - 6, 16);
     const char* glyph[] = {"x", "[", "_"};   // decorative; the "?" left of them is helpButton
     for (int i = 0; i < 3; ++i)
@@ -1105,10 +1138,11 @@ void HelpBubble::paint(juce::Graphics& g)
     g.drawRect(r, 1);
     auto in = r.reduced(8);
     auto title = in.removeFromTop(textHeight());
-    drawText(g, text.title, title.getX() + 1, title.getY(), kNavy);   // drawn twice: bold
-    drawText(g, text.title, title.getX(), title.getY(), kNavy);
+    const juce::Colour ink(0xff000080), body(0xff000000);   // the tooltip keeps its own colours
+    drawText(g, text.title, title.getX() + 1, title.getY(), ink);   // drawn twice: bold
+    drawText(g, text.title, title.getX(), title.getY(), ink);
     in.removeFromTop(8);
-    drawWrapped(g, text.body, in, kText);
+    drawWrapped(g, text.body, in, body);
 }
 
 void CyclesEmuEditor::timerCallback()
