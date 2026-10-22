@@ -169,17 +169,18 @@ std::unique_ptr<juce::RangedAudioParameter> makeParam(const ParamDef& d, const j
 
 using namespace cyclesemu;
 
-CyclesEmuProcessor::CyclesEmuProcessor()
+CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts(*this, nullptr, "params", makeLayout())
+      product(p), apvts(*this, nullptr, "params", makeLayout())
 {
     int err = 0;
     engine = mc_engine_new(stateDir().getFullPathName().toRawUTF8(), &err);
     if (engine == nullptr)
         engineError = "Engine state not found or unreadable in " + stateDir().getFullPathName()
                       + " (error " + juce::String(err) + "). Run aot/dump_state.py and copy it there.";
-    midiMode = apvts.getRawParameterValue("midimode");
+    midiMode = apvts.getRawParameterValue("midimode");     // CyclesEmu only
     keysTrack = apvts.getRawParameterValue("keystrack");
+    voiceCount = apvts.getRawParameterValue("voices");     // CyclesVoice only
     outGain = apvts.getRawParameterValue("outgain");
     tempoParam = apvts.getRawParameterValue("tempo");
     followHost = apvts.getRawParameterValue("followhost");
@@ -190,14 +191,20 @@ CyclesEmuProcessor::CyclesEmuProcessor()
         if (mc_engine_get_param(engine, 6, 0x16) > 126)   // reverb size 127 plays as 126 (step 10)
             mc_engine_param(engine, 6, 0x16, 126);
     }
-    for (auto& s : slots)
+    for (auto& s : slots)   // first every slot's parameter: applying one may read another
     {
         s.param = apvts.getParameter(s.id);
         s.raw = apvts.getRawParameterValue(s.id);
+    }
+    for (auto& s : slots)   // then every value as the engine has it, before anything is applied
+    {
         int v = engine ? currentEngineValue(s) : s.def->lo;
         s.lastParam = v;
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
     }
+    if (engine != nullptr && isVoice())   // and one sound on every voice from the start
+        for (auto& s : slots)
+            applyAll(*s.def, s.track, s.lastParam);
     // what the resets go back to
     initKit = kitToTree(apvts);
     if (auto json = juce::JSON::parse(stateDir().getChildFile("defaults.json")); json.isObject())
@@ -257,23 +264,30 @@ CyclesEmuProcessor::~CyclesEmuProcessor() { mc_engine_free(engine); }
 juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
-    for (int t = 0; t < kTracks; ++t)
+    // CyclesVoice: track 1's parameters are the sound, played on all six
+    for (int t = 0; t < trackPages(); ++t)
     {
-        auto group = std::make_unique<juce::AudioProcessorParameterGroup>(
-            "t" + juce::String(t + 1), "Track " + juce::String(t + 1), "|");
+        auto group = isVoice() ? std::make_unique<juce::AudioProcessorParameterGroup>("t1", "Voice", "|")
+                               : std::make_unique<juce::AudioProcessorParameterGroup>(
+                                     "t" + juce::String(t + 1), "Track " + juce::String(t + 1), "|");
         for (int i = 0; i < kNumTrackParams; ++i)
         {
             const auto& d = kTrackParams[i];
             juce::String id = paramId(t, d.id);
-            group->addChild(makeParam(d, id, "T" + juce::String(t + 1) + " " + d.name));
+            group->addChild(makeParam(d, id, isVoice() ? juce::String(d.name) : "T" + juce::String(t + 1) + " " + d.name));
             slots.push_back({id, &d, t});
         }
         layout.add(std::move(group));
     }
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID{"midimode", 1}, "MIDI Mode",
-        juce::StringArray{"Drum Map C1-F1", "Ch 1-6 = Tracks"}, 0));
-    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
+    if (isVoice())
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"voices", 1}, "Voices", 1, kTracks, kTracks));
+    else
+    {
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"midimode", 1}, "MIDI Mode",
+            juce::StringArray{"Drum Map C1-F1", "Ch 1-6 = Tracks"}, 0));
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
+    }
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"followhost", 1}, "Follow Host Tempo", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"tempo", 1}, "Tempo",
@@ -323,10 +337,45 @@ int CyclesEmuProcessor::paramValue(int track, const char* id) const
     return 0;
 }
 
+void CyclesEmuProcessor::applyAll(const ParamDef& d, int track, int v)
+{
+    if (!isVoice() || track >= kTracks)
+        return applyToEngine(d, track, v);
+    for (int t = 0; t < kTracks; ++t)
+        applyToEngine(d, t, v);
+}
+
+void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
+{
+    const int n = juce::jlimit(1, kTracks, voiceCount != nullptr ? juce::roundToInt(voiceCount->load()) : kTracks);
+    if (!on)
+    {
+        for (int t = 0; t < kTracks; ++t)
+            if (voices[t].on && voices[t].note == note)
+            {
+                mc_engine_note(engine, t, note, 0, 0, 0x0681);
+                voices[t].on = false;
+                voices[t].age = ++voiceClock;
+            }
+        return;
+    }
+    // the voice released longest ago; with none free, the oldest playing
+    int pick = -1;
+    for (int pass = 0; pass < 2 && pick < 0; ++pass)
+        for (int t = 0; t < n; ++t)
+            if ((pass == 1 || !voices[t].on) && (pick < 0 || voices[t].age < voices[pick].age))
+                pick = t;
+    if (voices[pick].on)
+        mc_engine_note(engine, pick, voices[pick].note, 0, 0, 0x0681);
+    voices[pick] = {note, true, ++voiceClock};
+    mc_engine_note(engine, pick, note, velocity, 1, 0x0681);
+}
+
 void CyclesEmuProcessor::applyLfoMult(int track)
 {
-    int mult = juce::jlimit(0, 11, paramValue(track, "lfomult"));
-    int freeRunning = paramValue(track, "lfosync") != 0;
+    const int pt = isVoice() ? 0 : track;   // CyclesVoice: the one sound's settings
+    int mult = juce::jlimit(0, 11, paramValue(pt, "lfomult"));
+    int freeRunning = paramValue(pt, "lfosync") != 0;
     mc_engine_param(engine, track, 0x18, mult + 12 * freeRunning);
 }
 
@@ -360,7 +409,7 @@ void CyclesEmuProcessor::applyParameterChanges()
         if (v != s.lastParam)
         {
             s.lastParam = v;
-            applyToEngine(*s.def, s.track, v);
+            applyAll(*s.def, s.track, v);
         }
     }
 }
@@ -368,6 +417,15 @@ void CyclesEmuProcessor::applyParameterChanges()
 void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
 {
     int ch = m.getChannel() - 1;
+    if (isVoice())
+    {
+        // one sound: notes on any channel to the voices, CCs to every voice
+        if (m.isNoteOnOrOff())
+            return voiceNote(m.getNoteNumber(), m.getVelocity(), m.isNoteOn());
+        if (!m.isController())
+            return;
+        ch = 0;
+    }
     if (m.isNoteOnOrOff())
     {
         int track = ch, note = m.getNoteNumber();
@@ -391,15 +449,18 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
     if (ch < 0 || ch >= kTracks || !m.isController())
         return;
     int cc = m.getControllerNumber(), v = m.getControllerValue();
+    const int first = ch, last = isVoice() ? kTracks - 1 : ch;   // CyclesVoice: every voice
     if (cc == 103)                                // multiplier: the firmware's 0-23 directly
     {
-        mc_engine_param(engine, ch, 0x18, juce::jlimit(0, 23, v));
+        for (int t = first; t <= last; ++t)
+            mc_engine_param(engine, t, 0x18, juce::jlimit(0, 23, v));
         return;
     }
     if (cc == 105)                                // destination: the firmware takes 0, 10-22 and 28-31
     {
         if (v == 0 || (v >= 10 && v <= 22) || (v >= 28 && v <= 31))
-            mc_engine_param(engine, ch, 0x1c, v);
+            for (int t = first; t <= last; ++t)
+                mc_engine_param(engine, t, 0x1c, v);
         return;
     }
     for (int i = 0; i < kNumTrackParams; ++i)
@@ -408,7 +469,7 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         if (d.cc == cc)
         {
             // punch and gate: the firmware stored 1 for every non-zero value tried
-            applyToEngine(d, ch, d.hi == 1 ? (v != 0) : v);
+            applyAll(d, ch, d.hi == 1 ? (v != 0) : v);
             return;
         }
     }

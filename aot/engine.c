@@ -220,3 +220,12 @@ int mc_engine_get_mute(mc_engine *g, int track)
 {
     return (int)((mc_ld32(g->x, MUTE_STATE + 0x14) >> track) & 1);
 }
+
+uint32_t mc_engine_kit(mc_engine *g) { return g->kit; }
+
+int mc_engine_peek(mc_engine *g, uint32_t addr)
+{
+    uint8_t b;
+    mc_mem_read(g->x, addr, &b, 1);
+    return b;
+}

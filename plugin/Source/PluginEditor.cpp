@@ -777,17 +777,28 @@ juce::PopupMenu CyclesEmuEditor::kitMenu()
 juce::PopupMenu CyclesEmuEditor::trackMenu()
 {
     juce::PopupMenu m;
-    const bool track = current < kTracks;
-    const juce::String n = track ? juce::String(current + 1) : juce::String();
-    m.addItem("Load Track " + n + "...", track, false, [this] { chooseFile(false, false); });
-    m.addItem("Save Track " + n + " As...", track, false, [this] { chooseFile(false, true); });
+    const bool track = current < proc.trackPages();
+    // CyclesVoice: the one sound; and the undo the Kit menu holds otherwise
+    const juce::String what = proc.isVoice() ? juce::String("Sound") : "Track " + juce::String(current + 1);
+    if (proc.isVoice())
+    {
+        m.addItem(undoWhat.isEmpty() ? juce::String("Undo") : "Undo " + undoWhat, undoKit.isValid(), false, [this] {
+            auto redo = kitToTree(proc.state());
+            treeToKit(proc.state(), undoKit);
+            undoKit = redo;
+            undoWhat = "Undo";
+        });
+        m.addSeparator();
+    }
+    m.addItem("Load " + what + "...", track, false, [this] { chooseFile(false, false); });
+    m.addItem("Save " + what + " As...", track, false, [this] { chooseFile(false, true); });
     m.addSeparator();
-    m.addItem("Copy Track " + n, track, false, [this] { trackClipboard = trackToTree(proc.state(), current); });
-    m.addItem("Paste to Track " + n, track && trackClipboard.isValid(), false, [this] {
+    m.addItem("Copy " + what, track, false, [this] { trackClipboard = trackToTree(proc.state(), current); });
+    m.addItem("Paste to " + what, track && trackClipboard.isValid(), false, [this] {
         remember("Paste");
         treeToTrack(proc.state(), current, trackClipboard);
     });
-    m.addItem("Reset Track " + n + " (init sound)", track && proc.canResetTrack(), false, [this] {
+    m.addItem("Reset " + what + " (init sound)", track && proc.canResetTrack(), false, [this] {
         remember("Reset Track");
         proc.resetTrack(current);
         status.setText("Track " + juce::String(current + 1) + " reset", juce::dontSendNotification);
@@ -843,7 +854,7 @@ juce::PopupMenu CyclesEmuEditor::helpMenu()
 
 void CyclesEmuEditor::randomiseTrack(RandomSection s, bool variation)
 {
-    if (current < kTracks)
+    if (current < proc.trackPages())
     {
         remember(variation ? "Vary" : "Randomise");
         randomise(proc.state(), current, s, rng, variation);
@@ -902,27 +913,39 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         globals.push_back(std::make_unique<ParamControl>(st, id, label, s));
         addAndMakeVisible(*globals.back());
     };
-    g("midimode", "MIDI Mode", S::Choice);
-    g("keystrack", "Key Trk", S::Knob);
+    if (proc.isVoice())
+        g("voices", "Voices", S::Knob);
+    else
+    {
+        g("midimode", "MIDI Mode", S::Choice);
+        g("keystrack", "Key Trk", S::Knob);
+    }
     g("outgain", "Output", S::Knob);
     addAndMakeVisible(codecTempo);   // tempo and host tempo
-    menuBar.menus = {{"Kit", [this] { return kitMenu(); }},
-                     {"Track", [this] { return trackMenu(); }},
-                     {"View", [this] { return viewMenu(); }},
-                     {"Help", [this] { return helpMenu(); }}};
+    if (proc.isVoice())   // one sound: no kit, and the sound's own menu
+        menuBar.menus = {{"Voice", [this] { return trackMenu(); }},
+                         {"View", [this] { return viewMenu(); }},
+                         {"Help", [this] { return helpMenu(); }}};
+    else
+        menuBar.menus = {{"Kit", [this] { return kitMenu(); }},
+                         {"Track", [this] { return trackMenu(); }},
+                         {"View", [this] { return viewMenu(); }},
+                         {"Help", [this] { return helpMenu(); }}};
     addAndMakeVisible(menuBar);
     status.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(status);
 
-    for (int i = 0; i <= kTracks; ++i)
+    const int nT = proc.trackPages();
+    for (int i = 0; i <= nT; ++i)
     {
-        auto* b = tabs.add(new juce::TextButton(i < kTracks ? "Track " + juce::String(i + 1) : juce::String("FX")));
+        auto* b = tabs.add(new juce::TextButton(i < nT ? (proc.isVoice() ? juce::String("Voice") : "Track " + juce::String(i + 1))
+                                                       : juce::String("FX")));
         b->setClickingTogglesState(true);
         b->setRadioGroupId(1);
         b->getProperties().set("tab", true);
-        setAccent(*b, kAccents[i]);
+        setAccent(*b, kAccents[i < nT ? i : 6]);
         b->onClick = [this, i] { showPage(i); };
-        if (i < kTracks)
+        if (i < nT)
         {
             auto* tp = new TrackPage(p, i);
             tp->beforeChange = [this](const juce::String& what) { remember(what); };
@@ -930,7 +953,7 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
         }
         else
             pages.add(new FxPage(st));
-        setAccent(*pages.getLast(), kAccents[i]);
+        setAccent(*pages.getLast(), kAccents[i < nT ? i : 6]);
         addChildComponent(pages.getLast());
     }
     // tabs above the panel's edge, so the selected one opens into it
@@ -979,7 +1002,8 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
         g.setColour(kAccents[i]);
         g.fillRect(kTitle.getX() + 4 + (i % 2) * 7, kTitle.getY() + 4 + (i / 2) * 7, 6, 6);
     }
-    drawText(g, "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4, kTitleText);
+    drawText(g, proc.isVoice() ? "CyclesVoice.exe" : "CyclesEmu.exe", kTitle.getX() + 24, kTitle.getY() + 4,
+             kTitleText);
     auto caps = kTitle.withTrimmedRight(3).withSizeKeepingCentre(kTitle.getWidth() - 6, 16);
     const char* glyph[] = {"x", "[", "_"};   // decorative; the "?" left of them is helpButton
     for (int i = 0; i < 3; ++i)
@@ -1010,7 +1034,7 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
         drawText(g, word.substring(i, i + 1), x + 3, logo.getY() + 3, kDark, 4);
         drawText(g, word.substring(i, i + 1), x, logo.getY(), kAccents[i % 4], 4);
     }
-    drawText(g, "Emu  v1.0", logo.getX() + 2, logo.getY() + 40, kText);
+    drawText(g, proc.isVoice() ? "Voice  v1.0" : "Emu  v1.0", logo.getX() + 2, logo.getY() + 40, kText);
     drawText(g, "Model:Cycles", logo.getX() + 2, logo.getY() + 58, kDimText);
 
     // the page panel, and the status bar
@@ -1021,8 +1045,11 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     auto right = sb.removeFromRight(200);
     sunken(g, sb.withTrimmedRight(2), false);
     sunken(g, right, false);
-    juce::String where = current < kTracks ? "Track " + juce::String(current + 1) + " of 6" : juce::String("Send FX");
-    g.setColour(kAccents[current]);
+    const bool onTrack = current < proc.trackPages();
+    juce::String where = !onTrack ? juce::String("Send FX")
+                         : proc.isVoice() ? juce::String(juce::roundToInt(proc.state().getRawParameterValue("voices")->load())) + " voices"
+                                          : "Track " + juce::String(current + 1) + " of 6";
+    g.setColour(kAccents[onTrack ? current : 6]);
     g.fillRect(right.getX() + 8, right.getCentreY() - 4, 8, 8);
     drawText(g, where, right.withTrimmedLeft(24), juce::Justification::centredLeft, kText);
 }
@@ -1031,9 +1058,19 @@ void CyclesEmuEditor::resized()
 {
     auto top = kToolbar.withTrimmedTop(20).reduced(12, 6);
     top.removeFromLeft(kLogoW);
-    globals[0]->setBounds(top.removeFromLeft(252).reduced(4, 0));   // MIDI mode
-    globals[1]->setBounds(top.removeFromLeft(100).reduced(4, 0));   // key track
-    globals[2]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
+    if (proc.isVoice())
+    {
+        top.removeFromLeft(120);
+        globals[0]->setBounds(top.removeFromLeft(110).reduced(4, 0));   // voices
+        globals[1]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
+        top.removeFromLeft(110);
+    }
+    else
+    {
+        globals[0]->setBounds(top.removeFromLeft(252).reduced(4, 0));   // MIDI mode
+        globals[1]->setBounds(top.removeFromLeft(100).reduced(4, 0));   // key track
+        globals[2]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
+    }
     codecTempo.setBounds(top.reduced(6, 0).withTrimmedTop(-6));
     status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
     menuBar.setBounds(kMenu);

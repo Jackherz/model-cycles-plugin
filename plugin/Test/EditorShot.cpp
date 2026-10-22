@@ -258,6 +258,77 @@ int main(int argc, char** argv)
     }
     retro::applyTheme(0);
 
+    // CyclesVoice in steady state: settings first, a second of silence, then
+    // the notes; the level over the 0.8 s after them. One note, the same note
+    // on three voices, a chord. (Notes right after a machine change catch the
+    // firmware still settling it: a transient, not a voice difference.)
+    {
+        auto steady = [&](std::vector<int> notes, int voices) {
+            CyclesEmuProcessor v(Product::Voice);
+            cyclesemu::setPlain(v.state(), "t1_machine", 4);
+            cyclesemu::setPlain(v.state(), "t1_decay", 110);
+            cyclesemu::setPlain(v.state(), "voices", (float)voices);
+            v.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            double e = 0;
+            const int at = 375, len = 300;   // 1 s, then 0.8 s
+            for (int b = 0; b < at + len; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == at)
+                    for (int k : notes)
+                        midi.addEvent(juce::MidiMessage::noteOn(1, k, (juce::uint8)110), 0);
+                buf.clear();
+                v.processBlock(buf, midi);
+                if (b >= at)
+                    for (int i = 0; i < 128; ++i)
+                        e += (double)buf.getSample(0, i) * buf.getSample(0, i);
+            }
+            return std::sqrt(e / (len * 128.0));
+        };
+        const double one = steady({60}, 6), three = steady({60, 60, 60}, 6), chord = steady({60, 64, 67}, 6),
+                     n64 = steady({64}, 6), n67 = steady({67}, 6), mono = steady({60, 64, 67}, 1);
+        const double sum = std::sqrt(one * one + n64 * n64 + n67 * n67);
+        const bool ok = std::abs(three / one - 3.0) < 0.05 && std::abs(chord / sum - 1.0) < 0.05
+                        && std::abs(mono / one - 1.0) < 0.3;
+        std::printf("voice, steady: one %.4f, same note x3 %.4f (x%.2f), chord %.4f (single notes' energies: %.4f), "
+                    "chord at 1 voice %.4f -> %s\n",
+                    one, three, three / one, chord, sum, mono, ok ? "PASS" : "FAIL");
+    }
+
+    // CyclesVoice's editor: the voice page and its FX page
+    {
+        CyclesEmuProcessor voice(Product::Voice);
+        // every voice must hold the one sound: compare tracks 2-6 with track 1
+        using namespace cyclesemu;
+        int differ = 0;
+        for (int i = 0; i < kNumTrackParams; ++i)
+        {
+            const auto& d = kTrackParams[i];
+            const int off = d.kind == Kind::Level ? -1 : d.kind == Kind::Mute ? -2 : d.offset;
+            for (int t = 1; t < kTracks; ++t)
+                if (voice.engineValue(t, off) != voice.engineValue(0, off))
+                {
+                    if (differ++ < 12)
+                        std::printf("  voice %d differs on %s: %d, voice 1 %d\n", t + 1, d.id, voice.engineValue(t, off),
+                                    voice.engineValue(0, off));
+                }
+        }
+        std::printf("voice: %d engine values differ between the voices at start -> %s\n", differ,
+                    differ == 0 ? "PASS" : "FAIL");
+        std::unique_ptr<juce::AudioProcessorEditor> ve(voice.createEditor());
+        auto* v = dynamic_cast<CyclesEmuEditor*>(ve.get());
+        for (int i = 0; i < 2; ++i)
+        {
+            v->showPage(i);
+            auto img = v->createComponentSnapshot(v->getLocalBounds(), true, 1.0f);
+            auto f = out.getChildFile(i == 0 ? "voice-page.png" : "voice-fx.png");
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::PNGImageFormat().writeImageToStream(img, os);
+        }
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"6", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

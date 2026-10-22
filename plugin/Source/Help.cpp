@@ -133,6 +133,10 @@ const std::map<juce::String, HelpText> kHelp = {
      {"MIDI Mode",
       "Drum Map: on any channel, C1 to F1 play tracks 1 to 6, and notes from C3 up play the Key Trk track. "
       "Ch 1-6: MIDI channels 1 to 6 play tracks 1 to 6, as on the hardware."}},
+    {"voices",
+     {"Voices",
+      "CyclesVoice plays one sound on the six engine tracks as six voices. This sets how many it uses: 1 is "
+      "mono (each note cuts the last), 6 lets chords and tails overlap. The oldest voice is reused first."}},
     {"keystrack",
      {"Key Trk", "In Drum Map mode, the track that notes from C3 up play, chromatically."}},
     {"followhost",

@@ -1016,6 +1016,53 @@ Jack's report: track 2's yellow ticks vanished on Grey (contrast 1.0:1).
   track colour. All end >= 2.0 before the outline; the worst raw case was
   yellow on Grey, 1.0. It renders `notes/editor-knobs-<scheme>.png`.
 
+## Step 23: CyclesVoice, one sound on six voices (2026-10-23)
+
+The first half of the Voice/FX split. **CyclesVoice** (AU/VST3/Standalone,
+code `Cyvo`) is built from the same sources as CyclesEmu with
+`CYCLES_PRODUCT=1` (`Product::Voice` in PluginProcessor.h).
+
+- **One sound, six voices.** The layout holds only track 1's parameters
+  (the "Voice" group), the FX, and **Voices** (1-6); no MIDI Mode or Key
+  Track. Every track-1 parameter, and every CC on any channel, is applied
+  to all six engine tracks (`applyAll`). At start the engine's track 1 is
+  copied to the other five.
+- **Voice allocation** (`voiceNote`): notes on any channel, chromatic.
+  - A note takes the free voice released longest ago; with none free, it
+    steals the oldest playing.
+  - Note-off releases the voice holding that note.
+  - Voices = 1 is mono: each note cuts the last.
+- **Editor**: a VOICE tab and FX; a Voices knob where MIDI Mode and Key Trk
+  were; a Voice menu (Undo, Load/Save/Copy/Paste/Reset Sound, Randomise and
+  Vary) instead of Kit and Track; title "CyclesVoice.exe".
+  - Sound presets are the same `.cytrack` files as CyclesEmu's track
+    presets.
+- **Fix found on the way**: the constructor applied each slot while filling
+  them. Applying LFO sync reads the multiplier's slot (crash when it was
+  still null), and wrote the engine before later slots read their engine
+  values. Now: all slots, then all engine values, then apply.
+
+### Checks
+
+- EditorShot: after start, 0 engine values differ between the six voices.
+- Steady state (settings, 1 s, then notes; the 0.8 s after):
+  - the same note on three voices is exactly 3.00x one note;
+  - a C-E-G chord's level equals its notes' energies added (0.2181 against
+    0.2182);
+  - the chord at 1 voice is one note's level.
+- HostTest (the built VST3) checks the same. A busy six-voice pattern costs
+  8.2 % at 48 kHz / 128. auval passes for Cyem and Cyvo.
+- **Gotcha**: a note within ~10-100 ms of a machine change catches the
+  firmware still settling it (levels jumped 0.03-0.2 depending on the exact
+  block). That is the firmware, not the voices; tests now let it settle.
+- `mc_engine_kit` and `mc_engine_peek` (`engine.h`) give tests a look at
+  guest memory (kit header, the per-track buffers at
+  `0x80001858 + 128 t`).
+
+Next: **CyclesFX**, the send effect. Find where the render sums the sends
+(the mixer `0x400567ba`) and add a hook to the translator, so the host's
+audio can be added there mid-render.
+
 ## Next steps
 
 

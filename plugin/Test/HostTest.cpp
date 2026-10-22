@@ -336,6 +336,59 @@ int resampled(juce::AudioPluginFormatManager& fm, const juce::String& path)
     return db < -100 ? 0 : 1;
 }
 
+// CyclesVoice: one sound on six voices. On the Tone machine, a chord at 6
+// voices must be louder than one note (three voices sound), and the same
+// chord at 1 voice must sound like a single note (each cuts the last).
+// Then the load: a note every 1/8 s across six pitches, 10 s.
+int voiceTest(juce::AudioPluginFormatManager& fm, const juce::String& path)
+{
+    auto render = [&](std::vector<int> notes, int voices, double* usMean) {
+        auto p = load(fm, path, 48000, 128);
+        if (!p)
+            return -1.0;
+        setParam(*p, "Machine", 4.0f / 10.0f);                 // Tone
+        setParam(*p, "Decay", 110.0f / 127.0f);
+        setParam(*p, "Voices", (float)(voices - 1) / 5.0f);
+        p->prepareToPlay(48000, 128);
+        juce::AudioBuffer<float> buf(2, 128);
+        double sum = 0, us = 0;
+        // settings, then a second for the firmware to settle them, then the notes
+        const int at = 375;
+        int n = 0, blocks = usMean ? 48000 * 10 / 128 : at + 300;
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (usMean == nullptr && b == at)
+                for (int k : notes)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, k, (juce::uint8)110), 0);
+            if (usMean != nullptr && b % 47 == 0)
+                midi.addEvent(juce::MidiMessage::noteOn(1, notes[(size_t)(b / 47) % notes.size()], (juce::uint8)100), 0);
+            buf.clear();
+            auto t0 = std::chrono::steady_clock::now();
+            p->processBlock(buf, midi);
+            us += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+            if (usMean != nullptr || b >= at)
+                for (int i = 0; i < 128; ++i, ++n)
+                    sum += (double)buf.getSample(0, i) * buf.getSample(0, i);
+        }
+        if (usMean)
+            *usMean = us / blocks;
+        return std::sqrt(sum / juce::jmax(1, n));
+    };
+    const double one = render({60}, 6, nullptr), chord = render({60, 64, 67}, 6, nullptr),
+                 mono = render({60, 64, 67}, 1, nullptr);
+    // three independent voices add their energies; one voice leaves one note
+    const double e64 = render({64}, 6, nullptr), e67 = render({67}, 6, nullptr);
+    const double sum = std::sqrt(one * one + e64 * e64 + e67 * e67);
+    double us = 0;
+    render({48, 55, 60, 64, 67, 72}, 6, &us);
+    const bool ok = one > 0 && std::abs(chord / sum - 1.0) < 0.05 && std::abs(mono / one - 1.0) < 0.3;
+    std::printf("voice: one note %.4f, chord at 6 voices %.4f (its notes' energies %.4f), chord at 1 voice %.4f; "
+                "busy load %.1f us per 128-sample callback (%.1f%%) -> %s\n",
+                one, chord, sum, mono, us, 100 * us / 2666.7, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -352,6 +405,7 @@ int main(int argc, char** argv)
     rc |= idle(fm, path);
     rc |= tempo(fm, path);
     rc |= resampled(fm, path);
+    rc |= voiceTest(fm, path.replace("CyclesEmu.vst3", "CyclesVoice.vst3"));
     rc |= load_test(fm, path, 48000, outDir.getChildFile("hosttest-48k.wav"));
     rc |= load_test(fm, path, 44100, outDir.getChildFile("hosttest-44k1.wav"));
     return rc;

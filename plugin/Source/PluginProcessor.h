@@ -50,10 +50,21 @@ extern const int kLfoDestValues[kNumLfoDests];
 juce::String paramId(int track, const char* id);   // "t1_decay", "fx_delaytime", "midimode"
 } // namespace cyclesemu
 
+// Which plugin a build is: CyclesEmu (six tracks, as the hardware) or
+// CyclesVoice (one sound played polyphonically on the six tracks as six
+// voices). Each plugin target compiles CYCLES_PRODUCT.
+enum class Product { Full, Voice };
+#ifndef CYCLES_PRODUCT
+#define CYCLES_PRODUCT 0
+#endif
+
 class CyclesEmuProcessor : public juce::AudioProcessor
 {
 public:
-    CyclesEmuProcessor();
+    explicit CyclesEmuProcessor(Product = (Product)CYCLES_PRODUCT);
+    const Product product;
+    bool isVoice() const { return product == Product::Voice; }
+    int trackPages() const { return isVoice() ? 1 : cyclesemu::kTracks; }
     ~CyclesEmuProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -63,7 +74,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "CyclesEmu"; }
+    const juce::String getName() const override { return isVoice() ? "CyclesVoice" : "CyclesEmu"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -86,6 +97,14 @@ public:
     void resetTrack(int track);
     void resetKit();
     const juce::ValueTree& newKit() const { return initKit; }
+    // for tests: what the engine holds (a sound word, or -1 level, -2 mute)
+    int peek(uint32_t addr) const { return mc_engine_peek(engine, addr); }
+    uint32_t kitAddress() const { return mc_engine_kit(engine); }
+    int engineValue(int track, int offset) const
+    {
+        return offset == -1 ? mc_engine_get_level(engine, track)
+               : offset == -2 ? mc_engine_get_mute(engine, track) : mc_engine_get_param(engine, track, offset);
+    }
     // the output's peak over the last callback (0..), for the editor's meter
     float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
 
@@ -110,6 +129,18 @@ private:
     int paramValue(int track, const char* id) const;
 
     mc_engine* engine = nullptr;
+    // CyclesVoice: the tracks as voices; the oldest free (or, all busy, the
+    // oldest playing) voice takes the next note
+    struct Voice
+    {
+        int note = -1;
+        bool on = false;
+        uint32_t age = 0;
+    } voices[cyclesemu::kTracks];
+    uint32_t voiceClock = 0;
+    std::atomic<float>* voiceCount = nullptr;
+    void voiceNote(int note, int velocity, bool on);
+    void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
     juce::String engineError;
     std::vector<Slot> slots;
     juce::AudioProcessorValueTreeState apvts;

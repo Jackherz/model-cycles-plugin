@@ -76,6 +76,28 @@ target_link_libraries(CyclesEmu
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 
+# CyclesVoice: the same sources as one sound played polyphonically on the
+# six engine tracks (Product::Voice, PluginProcessor.h).
+juce_add_plugin(CyclesVoice
+    COMPANY_NAME "Personal"
+    BUNDLE_ID "personal.cyclesvoice"
+    PLUGIN_MANUFACTURER_CODE Pers
+    PLUGIN_CODE Cyvo
+    FORMATS AU VST3 Standalone
+    PRODUCT_NAME "CyclesVoice"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE)
+target_sources(CyclesVoice PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_compile_definitions(CyclesVoice PUBLIC
+    CYCLES_PRODUCT=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0)
+target_link_libraries(CyclesVoice
+    PRIVATE mcengine juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
+           juce::juce_recommended_warning_flags)
+
 # Host the built VST3 like a DAW: identity with the engine, callback timings.
 juce_add_console_app(CyclesEmuHostTest PRODUCT_NAME "CyclesEmuHostTest")
 target_sources(CyclesEmuHostTest PRIVATE Test/HostTest.cpp)
