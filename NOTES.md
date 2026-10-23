@@ -1374,6 +1374,21 @@ cheap.
 
 ## Next steps
 
+**First, when Jack returns (2026-10-24): the mixer meter jumps when the level
+changes.** With a sound playing, moving a track's level makes its meter jump
+a little instead of moving smoothly. Likely causes to check:
+- The meter scales the pre-fader peak by `levelSent` straight away (step 31).
+  But the firmware probably smooths the level change over several blocks,
+  and a knob drag moves in steps. So the meter steps ahead of the sound.
+  Use the level the firmware is actually applying (its smoothed level word
+  or gain, if it can be found the way step 30 found the pitch smoother), or
+  smooth the meter's gain the same way.
+- The meter's own ballistics in `MixerPage` (attack/release per frame):
+  check they don't hold a stale peak and then drop.
+- Verify with a test: a held note, the level ramped in small steps; the
+  meter's per-frame changes should stay small.
+
+
 
 0. (done, v0.1) CyclesEmu plugin. Agreed order (Jack, 2026-10-21):
    a. (done, step 9) the idle hum: the reverb at size 127 froze the
