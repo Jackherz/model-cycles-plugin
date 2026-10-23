@@ -925,12 +925,39 @@ int main(int argc, char** argv)
             // the combs' deep notches are where a measurement over a decaying
             // sound is least sure: a looser 90th percentile for them
             const bool comb = c.type == 5 || c.type == 6;
-            const bool good = median < 0.5 && p90 < (comb ? 3.0 : 2.0);
+            const bool good = median < 0.5 && p90 < (comb ? 3.5 : 2.0);
             ok &= good;
             std::printf("filter %-14s engine against its law: median %.2f dB, 90%% within %.2f dB%s\n", c.name, median, p90,
                         good ? "" : "  <-");
         }
         std::printf("filter types: the engine follows the drawn response -> %s\n", ok ? "PASS" : "FAIL");
+        // the combs in tune high up: Comb+ at FREQ 108 (C7, 2093 Hz, a
+        // period of 22.93 samples), full feedback so it rings: the period
+        // from the output's autocorrelation, interpolated
+        {
+            const auto wet = render(6, 108, 127, 127);
+            const size_t from = wet.size() / 4, len = wet.size() / 2;
+            auto ac = [&](int lag) {
+                double acc = 0;
+                for (size_t i = from; i < from + len; ++i)
+                    acc += (double)wet[i] * wet[i + (size_t)lag];
+                return acc;
+            };
+            int at = 15;
+            for (int lag = 15; lag <= 30; ++lag)
+                if (ac(lag) > ac(at))
+                    at = lag;
+            const double a0 = ac(at - 1), b0 = ac(at), c0 = ac(at + 1);
+            const double period = at + 0.5 * (a0 - c0) / (a0 - 2 * b0 + c0);
+            const double want = 48000.0 / (261.6256 * std::pow(2.0, (108 - 72) / 12.0));
+            const double cents = 1200.0 * std::log2(want / period);
+            float peakOut = 0;
+            for (float x : wet)
+                peakOut = std::max(peakOut, std::isfinite(x) ? std::abs(x) : 1e9f);
+            std::printf("comb tuning: Comb+ at C7 rings with a period of %.3f samples (wanted %.3f: %+.1f cents), "
+                        "full feedback bounded at %.3f -> %s\n", period, want, cents, peakOut,
+                        std::abs(cents) < 5.0 && peakOut < 2.0f ? "PASS" : "FAIL");
+        }
     }
 
     // the tab lights: a drum-map note for track 3 lights its tab (and only

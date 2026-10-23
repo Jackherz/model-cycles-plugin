@@ -1456,6 +1456,37 @@ SETUP (pp. 30-32).
 - **Left for later**: the Syntakt's other sources on the same pattern:
   Pitch Bend, Mod Wheel, Breath and Aftertouch.
 
+## Step 36: better-sounding combs, after Schwung's "Work" (2026-10-23)
+
+Jack: make the comb filters sound better, from a module in the Schwung
+catalogue (`github.com/charlesvestal/schwung`, `module-catalog.json`,
+167 modules).
+- **Looked at**:
+  - **Work** (timncox/schwung-work, MIT): a Tonverk-style "Comb Filter"
+    machine. A soft clip (`x (27 + x^2) / (27 + 9 x^2)`) on the fed-back
+    sum, a 2-pole TPT SVF low-pass (Q 0.707) damping the loop, linear
+    interpolation, feedback up to 0.97.
+  - **PALETTE** (filliformes/palette-move, MIT): HALO, a tuned-comb bank:
+    one-pole damping, tanh-clipped regeneration, linear interpolation.
+  - Surge XT (GPL-3) not used.
+- **The combs now** (`dn2_filter`, FT_COMBM / FT_COMBP). The DN2-measured
+  laws stay (FREQ in semitones with 72 = C4, the feedback curve, LPF and
+  trim), so the knobs mean what they did. The sound is new:
+  - Work's soft clip in the loop: high feedback blooms instead of turning
+    harsh, and stays bounded.
+  - Work's 2-pole SVF damping. The DN2's one-pole coefficients are turned
+    into cutoffs (-ln p x fs / 2 pi: 1.5 kHz at LPF 0 to open at 127).
+  - 4-point Hermite interpolation instead of linear (mine), so the highs
+    and the tuning are kept. The shortest delay is now 3 samples.
+  - The damping filter's phase delay at the comb's pitch is taken off the
+    delay line, so the comb stays in tune.
+- **EditorShot**:
+  - Comb+ at C7 with full feedback rings with a period of 22.943 samples
+    against 22.934 wanted (-0.7 cents), peak 0.277.
+  - The drawn response (`mc_filter_db`: ideal delay, SVF damping) is
+    followed with median 0.4 dB. Its 90th percentile in the notches is
+    allowed 3.5 dB.
+
 ## Next steps
 
 
@@ -1552,7 +1583,7 @@ SETUP (pp. 30-32).
         parameter 79): the cutoff follows the note, by a separate Key
         Tracking amount on the filter page. In the C filter (`tf_after`):
         the cutoff index offset by (note - centre) x amount.
-   n. **Better-sounding combs** (Jack, 2026-10-24). The DN2-fitted
+   n. ~~Better-sounding combs~~: done, step 36. Was: **Better-sounding combs** (Jack, 2026-10-24). The DN2-fitted
       Comb-/Comb+ (step 31) could sound better. Look through the Schwung
       module catalogue on its website for a module whose GitHub repo has a
       good comb filter algorithm to port (check its licence). Candidates to

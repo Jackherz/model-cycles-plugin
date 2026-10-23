@@ -156,8 +156,10 @@ static const double LEG_F0[17] = {0.00085, 0.00130, 0.00207, 0.00336, 0.00550, 0
                                   0.07078, 0.11721, 0.19011, 0.29857, 0.45216, 0.63942, 0.82279, 0.95};
 static const double LEG_Q0[17] = {1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98,
                                   1.89, 1.89, 1.81, 1.72, 1.57, 1.37, 1.19, 1.05};
-/* the combs: the loop's one-pole coefficient over LPF, the output trim over FEEDBACK */
-static const double COMB_P[9] = {0.82, 0.78, 0.66, 0.50, 0.33, 0.16, 0.08, 0.05, 0.03};
+/* the combs: the loop's damping cutoff over LPF (Hz: the DN2's one-pole
+ * coefficients 0.82 .. 0.03 as cutoffs, -ln(p) fs / 2 pi), the output trim
+ * over FEEDBACK */
+static const double COMB_FC[9] = {1516, 1898, 3175, 5296, 8470, 14000, 19300, 21000, 21000};
 static const double COMB_C[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 0.99, 0.945, 0.78, 0.65};
 
 static void dn2_coefs(int type, double v, double r, double x3, double *c)
@@ -188,9 +190,17 @@ static void dn2_coefs(int type, double v, double r, double x3, double *c)
     case FT_COMBP: {                /* FREQ: semitones, 72 = C4; feedback 1 - (1 - fb)^3 */
         double hz = 261.6256 * pow(2.0, (v - 72.0) / 12.0), d = 48000.0 / hz;
         double fb = 1.0 - pow(1.0 - r / 127.0, 3.0), lim = type == FT_COMBP ? 0.997 : 0.951;
-        c[0] = d < 2 ? 2 : d > 16380 ? 16380 : d;
+        c[0] = d < 3 ? 3 : d > 16380 ? 16380 : d;   /* 3: Hermite reads a sample past the pair */
         c[1] = (fb > lim ? lim : fb) * (type == FT_COMBP ? 1 : -1);
-        c[2] = interp(COMB_P, x3, 9, 16.0);
+        c[2] = tan(M_PI * interp(COMB_FC, x3, 9, 16.0) / 48000.0);   /* the damping SVF's g */
+        {   /* in tune: the damping filter delays the loop too, by its phase
+             * delay at the comb's pitch; the delay line makes up the rest */
+            const double w0 = 2 * M_PI * hz / 48000.0;
+            const double complex z1 = cexp(-I * w0), sd = (1 - z1) / (1 + z1) / c[2];
+            const double tau = -carg(1 / (sd * sd + 1.41421356 * sd + 1)) / w0;
+            c[0] -= tau;
+            c[0] = c[0] < 3 ? 3 : c[0];
+        }
         c[3] = interp(COMB_C, r, 9, 16.0);
         break;
     }
@@ -270,15 +280,33 @@ static void dn2_filter(mc_engine *g, int t, struct tf_state *f)
         }
         case FT_COMBM:
         case FT_COMBP: {
-            const double d = c[0], gfb = c[1], p = c[2], trim = c[3];
+            /* The DN2's laws (tuning, feedback, LPF, trim), with a better
+             * sound, after the Comb Filter machine of Tim Cox's "Work"
+             * (Schwung, MIT; NOTES.md step 36): the delay read with 4-point
+             * Hermite interpolation (in tune, the highs kept), damped by a
+             * 2-pole state-variable low-pass, and soft-saturated as it is
+             * fed back, so high feedback rings warm instead of harsh. */
+            const double d = c[0], gfb = c[1], gg = c[2], trim = c[3];
             double rp = f->pos - d;
             if (rp < 0) rp += 16384;
-            const int i0 = (int)rp, i1 = (i0 + 1) & 16383;
-            const double fr = rp - i0, del = f->comb[i0] * (1 - fr) + f->comb[i1] * fr;
-            s0 = (1 - p) * del + p * s0;                 /* the loop's low-pass */
-            f->comb[f->pos] = (float)(x + gfb * s0);
+            const int i0 = (int)rp;
+            const double fr = rp - i0;
+            const double ym = f->comb[(i0 - 1) & 16383], y0 = f->comb[i0], y1 = f->comb[(i0 + 1) & 16383],
+                         y2 = f->comb[(i0 + 2) & 16383];
+            const double c1 = 0.5 * (y1 - ym), c2 = ym - 2.5 * y0 + 2 * y1 - 0.5 * y2,
+                         c3 = 0.5 * (y2 - ym) + 1.5 * (y0 - y1);
+            const double del = ((c3 * fr + c2) * fr + c1) * fr + y0;
+            /* the damping: a TPT SVF low-pass, Q 0.707 (k = sqrt 2) */
+            const double kk = 1.41421356, a1 = 1.0 / (1.0 + gg * (gg + kk)), a2 = gg * a1, a3 = gg * a2;
+            const double v3 = del - s1, v1 = a1 * s0 + a2 * v3, v2 = s1 + a2 * s0 + a3 * v3;
+            s0 = 2 * v1 - s0;
+            s1 = 2 * v2 - s1;
+            /* fed back through Work's soft clip, x (27 + x^2) / (27 + 9 x^2) */
+            double fbk = x + gfb * v2;
+            fbk = fbk < -3 ? -1 : fbk > 3 ? 1 : fbk * (27 + fbk * fbk) / (27 + 9 * fbk * fbk);
+            f->comb[f->pos] = (float)fbk;
             f->pos = (f->pos + 1) & 16383;
-            y = trim * (x + 1.05 * gfb * s0);
+            y = trim * (x + 1.05 * gfb * v2);
             break;
         }
         default: {                  /* FT_LEGACY */
@@ -440,10 +468,9 @@ double mc_filter_db(int type, double v, double r, double extra, double hz)
     }
     case FT_COMBM:
     case FT_COMBP: {
-        /* the delay as the DSP reads it: linear interpolation between samples */
-        const double n = floor(c[0]), fr = c[0] - n;
-        const double complex zd = (1 - fr) * cexp(-I * w * n) + fr * cexp(-I * w * (n + 1));
-        const double complex L = (1 - c[2]) / (1 - c[2] * z1);
+        /* the delay (Hermite: close to exact), the damping SVF (Q 0.707) */
+        const double complex zd = cexp(-I * w * c[0]);
+        const double complex sd = sb / c[2], L = 1 / (sd * sd + 1.41421356 * sd + 1);
         const double complex e = L * zd / (1 - c[1] * L * zd);
         h = c[3] * (1 + 1.05 * c[1] * e);
         break;
