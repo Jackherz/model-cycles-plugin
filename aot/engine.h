@@ -44,6 +44,10 @@ void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float del
  * instead of the firmware's block-stepped one; off (bit-exact) by default.
  * Needs a render translated with --hook 4014ab9c --hook 4014abe2. */
 void mc_engine_set_smooth_filter(mc_engine *g, int on);
+/* Make a sound word's smoothed copy (what the voices read) equal the word
+ * now, skipping the firmware's slide toward it: the glide uses it at a
+ * trigger, so a note starts at the pitch it should. */
+void mc_engine_snap_param(mc_engine *g, int track, int offset);
 
 #ifdef __cplusplus
 }

@@ -1272,6 +1272,29 @@ the cutoff at 0; it should be as smooth as the Syntakt's or the DN2's.
   32, 64 and 100, at speeds 80 and 127: 6.5-34.9 against 0.98-1.01 (1.27 at
   OFF, speed 127). PASS under 1.3.
 
+## Step 30: portamento started from the wrong place (2026-10-24)
+
+Jack's report, on SY Bits in both plugins: playing a key and then a higher
+or lower one, the glide "slides from the wrong place", more clearly at long
+times.
+- **Cause**: the firmware smooths every sound word. A note triggered with
+  the glide's starting offset still read the smoothed pitch of the note
+  before (smoothed word 0x4000 against 0x3901). So it sounded at its own
+  pitch, slid back toward the start over about 100 ms, and only then glided.
+- **The smoother's state**: per track and parameter, a 32-bit value at
+  `0x80001204 + 132 t + 4 k` with the word in its top half, plus the 16-bit
+  copy the voices read at `0x8000100c + 14 + 66 t + 2 k`. Found by stepping
+  the pitch word mid-note and searching SRAM for a value that followed it.
+- **Fix**: `mc_engine_snap_param(g, track, offset)` sets both to the word.
+  The glide calls it at every trigger, and on a legato step without
+  portamento, which on the hardware is immediate.
+- EditorShot: the voice reads the glide's start at the trigger (0x3400),
+  and the pitch in the note's first 20 ms is 0.2 st from the note before.
+- UI, at Jack's request:
+  - The filter screen shows only the curve, no cutoff or envelope text.
+  - GLIDE: PORT and LEGATO are switch plates, capped at a button's height.
+  - Times show compactly ("104ms", "1.25s").
+
 ## Next steps
 
 
@@ -1350,6 +1373,20 @@ the cutoff at 0; it should be as smooth as the Syntakt's or the DN2's.
       https://github.com/CHOMPI-Club/CHOMPI). After everything else is
       finished and debugged: study how it works and how it could fit the
       plugin.
+   m. **Velocity (and aftertouch) modulation, as on the Syntakt** (Jack,
+      2026-10-24). A pad hit harder changes the sound, the way the
+      hardware's velocity modifier does: per-track destinations, each with
+      a bipolar depth, applied on every note from MIDI velocity. Check the
+      Syntakt manual for its exact destinations, depth range and curve, and
+      whether the value holds for the note or follows the last hit.
+      Plugin-side: offset each destination's word at note-on (as the glide
+      does with pitch), on top of the knob, LFO and p-locks.
+      - **Keytrack modifier** too (Jack, 2026-10-24): the same, driven by
+        the note played instead of velocity (distance from a centre note).
+      - **Filter keytracking, as on the Digitone II** (its KEY.T,
+        parameter 79): the cutoff follows the note, by a separate Key
+        Tracking amount on the filter page. In the C filter (`tf_after`):
+        the cutoff index offset by (note - centre) x amount.
    l. **Other delay and reverb engines** (Jack, 2026-10-23). Instead of the
       Model:Cycles' own delay and reverb:
       - Port the Syntakt's or the Digitone II's delay and reverb if

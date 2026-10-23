@@ -594,7 +594,7 @@ int main(int argc, char** argv)
     {
         struct Run
         {
-            std::vector<int> word;
+            std::vector<int> word, smooth;
             std::vector<float> peak, out;
         };
         auto play = [](std::initializer_list<std::pair<const char*, float>> settings,
@@ -624,6 +624,7 @@ int main(int argc, char** argv)
                 if (b < 1500)
                     continue;
                 r.word.push_back((f.peek(pitchAt) << 8) | f.peek(pitchAt + 1));
+                r.smooth.push_back((f.peek(0x8000102eu) << 8) | f.peek(0x8000102fu));
                 r.peak.push_back(buf.getMagnitude(0, 0, 32));
                 for (int i = 0; i < 32; ++i)
                     r.out.push_back(buf.getSample(0, i));
@@ -654,11 +655,16 @@ int main(int argc, char** argv)
             auto r = play({{"t1_port", 1}, {"t1_ptim", ptim}, {"t1_pslope", 1}},
                           {{0, 60, true}, {1500, 60, false}, {1500, 72, true}}, 2400);
             const int start = r.word[1500], mid = r.word[1500 + 150], end = r.word[1500 + 320];
+            // where the voice starts: the smoothed word it reads, not the last note's
+            const int startSmoothed = r.smooth[1500];
+            const double first = semis(r, 1503, 1533);   // its first 20 ms, past the attack
             const double after = semis(r, 1500 + 400, 2400);
             const bool ok = start == 0x3400 + 0x0a && std::abs(mid - 0x3a00) < 0x30 && end == 0x4000
-                            && std::abs(after - 12.0) < 0.1;
-            std::printf("portamento 200 ms: word 0x%04x at the note, 0x%04x at 100 ms, 0x%04x at 213 ms, then %.2f st "
-                        "-> %s\n", start, mid, end, after, ok ? "PASS" : "FAIL");
+                            && std::abs(after - 12.0) < 0.1 && std::abs(startSmoothed - start) < 0x10
+                            && std::abs(first) < 1.0;
+            std::printf("portamento 200 ms: word 0x%04x at the note (voice reads 0x%04x, %.2f st in its first 20 ms), "
+                        "0x%04x at 100 ms, 0x%04x at 213 ms, then %.2f st -> %s\n", start, startSmoothed, first, mid, end,
+                        after, ok ? "PASS" : "FAIL");
         }
         // constant rate: 200 ms an octave, so two octaves take 400 ms
         {
@@ -706,7 +712,7 @@ int main(int argc, char** argv)
         {
             auto r = play({{"t1_legato", 1}},
                           {{0, 60, true}, {300, 64, true}, {600, 64, false}, {900, 60, false}, {1200, 62, true}}, 1800);
-            const double back = semis(r, 700, 900), next = semis(r, 1201, 1231), later = semis(r, 1300, 1800);
+            const double back = semis(r, 700, 900), next = semis(r, 1203, 1233), later = semis(r, 1300, 1800);
             std::printf("legato release: back to %.2f st; then 62 at %.2f st in its first 20 ms, %.2f st later -> %s\n",
                         back, next, later,
                         std::abs(back) < 0.1 && std::abs(next - 2) < 0.1 && std::abs(later - 2) < 0.1 ? "PASS" : "FAIL");

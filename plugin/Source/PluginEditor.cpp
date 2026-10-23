@@ -148,8 +148,8 @@ void ParamControl::resized()
         case Style::Toggle:
             toggle.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 24));
             break;
-        case Style::Switch:
-            toggle.setBounds(r);
+        case Style::Switch:   // a plate, never taller than a button (in a row of knobs too)
+            toggle.setBounds(r.withSizeKeepingCentre(r.getWidth(), juce::jmin(r.getHeight(), 32)));
             break;
         case Style::Icons:
         {
@@ -559,25 +559,15 @@ void FilterScope::paint(juce::Graphics& g)
     // Q 0.5 .. 50 over the resonance knob. Approximate: the exact table
     // is in the tweak's code.
     const int cut = juce::roundToInt(raw[0]->load()), res = juce::roundToInt(raw[1]->load());
-    const int env = juce::roundToInt(raw[2]->load()) - 64, dec = juce::roundToInt(raw[3]->load());
     const bool off = cut == 64, lp = cut < 64;
     const double fc = lp ? 20000.0 * std::pow(5.0 / 20000.0, (63 - cut) / 63.0)
                          : 5.0 * std::pow(19000.0 / 5.0, (cut - 65) / 62.0);
     const double q = 0.5 * std::pow(100.0, res / 127.0);
 
+    // the curve only, no numbers: moves are made by ear
     auto r = getLocalBounds();
     auto in = codecScreen(g, r);
-    auto head = in.reduced(6, 3).removeFromTop(14);
-    auto num = [](double hz) {
-        return hz >= 1000.0 ? juce::String(hz / 1000.0, hz >= 10000.0 ? 1 : 2) + "kHz" : juce::String((int)hz) + "Hz";
-    };
-    drawText(g, off ? juce::String("- OFF -") : "- " + juce::String(lp ? "LP" : "HP") + " " + num(fc) + " -",
-             head, juce::Justification::centredLeft, kPhosphor);
-    drawText(g, env == 0 ? juce::String("ENV 0") : "ENV " + juce::String(env > 0 ? "+" : "") + juce::String(env) +
-                                                       " D" + juce::String(dec),
-             head, juce::Justification::centredRight, env == 0 ? kPhosphorDim : kPhosphor);
-
-    auto p = in.reduced(8, 4).withTrimmedTop(16);
+    auto p = in.reduced(8, 6);
     // log frequency 20 Hz .. 20 kHz; -30 .. +24 dB
     auto xOf = [&](double hz) { return p.getX() + (int)(std::log(hz / 20.0) / std::log(1000.0) * p.getWidth()); };
     auto yOf = [&](double db) {
@@ -684,7 +674,7 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     addAndMakeVisible(filterScope);
     // legato and portamento; the rest of the Syntakt's setup in the Track menu
     addAndMakeVisible(glide);
-    glide.addRow({make(st, t, "port", "Port", S::Toggle), make(st, t, "legato", "Legato", S::Toggle),
+    glide.addRow({make(st, t, "port", "Port", S::Switch), make(st, t, "legato", "Legato", S::Switch),
                   make(st, t, "ptim", "Time", S::Knob), make(st, t, "pamount", "Amount", S::Knob)});
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
@@ -702,8 +692,8 @@ void TrackPage::resized()
     // and the glide's to the right
     auto bottom = r.removeFromBottom(162).withTrimmedTop(6);
     const int w = bottom.getWidth();
-    glide.setBounds(bottom.removeFromRight(w * 38 / 100).withTrimmedLeft(6));
-    filter.setBounds(bottom.removeFromLeft(w * 40 / 100).withTrimmedRight(6));
+    glide.setBounds(bottom.removeFromRight(w * 42 / 100).withTrimmedLeft(6));
+    filter.setBounds(bottom.removeFromLeft(w * 38 / 100).withTrimmedRight(6));
     filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedRight(6).withTrimmedTop(8));
     sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
     lfo.setBounds(r.withTrimmedLeft(6));

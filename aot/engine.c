@@ -94,6 +94,7 @@ static void fx_hook(mc_ctx *x, uint32_t pc)
 #define TF_TRIG        0x40160ee4u
 #define TRACK_BUFS     0x80001858u
 #define SMOOTHED       0x8000100cu       /* + 14 + 66 t + 2 k */
+#define SMOOTH_STATE   0x80001204u       /* + 132 t + 4 k: the smoothers' 32-bit state */
 
 static double tf_cutoff_hz(double i) { double f = 5.0 * pow(4400.0, i / 16384.0); return f < 20000.0 ? f : 20000.0; }
 
@@ -188,6 +189,21 @@ static void engine_update_hook(mc_engine *g)
 {
     g->x->hook = g->in_l || g->smooth_filter ? engine_hook : NULL;
     g->x->hook_user = g;
+}
+
+void mc_engine_snap_param(mc_engine *g, int track, int offset)
+{
+    /* the firmware's smoother set to a sound word itself, so a change made
+     * at a trigger lands at once instead of sliding: its 32-bit state
+     * (SMOOTH_STATE + 132 t + 4 k, the word in the top half, found by
+     * watching SRAM follow a stepped pitch) and the 16-bit copy the voices
+     * read (SMOOTHED + 14 + 66 t + 2 k), k = (offset - 0x14) / 2 */
+    if (track < 0 || track > 5 || offset < 0x14 || offset > 0x52 || (offset & 1))
+        return;
+    const int k = (offset - 0x14) / 2;
+    const uint32_t word = mc_ld16(g->x, g->kit + 0x1c + 100 * track + offset);
+    mc_st32_raw(g->x, SMOOTH_STATE + 132 * track + 4 * k, word << 16);
+    mc_st16_raw(g->x, SMOOTHED + 14 + 66 * track + 2 * k, word);
 }
 
 void mc_engine_set_smooth_filter(mc_engine *g, int on)

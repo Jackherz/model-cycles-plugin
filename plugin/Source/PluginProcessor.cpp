@@ -179,7 +179,9 @@ juce::String showValue(Show s, int v)
     if (s == Show::GlideTime)
     {
         const double ms = glideMs(v);
-        return ms < 1000.0 ? juce::String(juce::roundToInt(ms)) + " ms" : juce::String(ms / 1000.0, 2) + " s";
+        // compact, for the value box: "104ms", "1.25s", "10.0s"
+        return ms < 1000.0 ? juce::String(juce::roundToInt(ms)) + "ms"
+                           : juce::String(ms / 1000.0, ms < 10000.0 ? 2 : 1) + "s";
     }
     switch (s)
     {
@@ -612,7 +614,10 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
         beginGlide(g, from, s);
     else
         g.cur = note, g.step = 0;
-    writePitch(track);   // first: the note starts where the glide does
+    // first: the note starts where the glide does, without the firmware's
+    // smoothing sliding there from the last note's pitch
+    writePitch(track);
+    mc_engine_snap_param(engine, track, 0x28);
     mc_engine_note(engine, track, note, velocity, 1, 0x0681);
 }
 
@@ -630,6 +635,8 @@ void CyclesEmuProcessor::legatoTo(int track, int note, const GlideSettings& s)
     else
         g.cur = note, g.step = 0;
     writePitch(track);
+    if (!s.port)   // a legato step without portamento: at once, as on the hardware
+        mc_engine_snap_param(engine, track, 0x28);
 }
 
 // A track's notes: in Legato, a key pressed while another is held moves the
