@@ -43,14 +43,14 @@ const juce::StringArray kLfoMultNames{"1", "2", "4", "8", "16", "32", "64", "128
 // The firmware's destination values and the names its LFO page shows.
 // 28-31: the per-track filter's parameters (Modded-Cycles' track-filter,
 // NOTES.md step 17), which it adds to the LFO's list
-const juce::StringArray kFilterTypeNames{"Cycles", "Multimode", "Lowpass 4", "Equalizer", "Comb-", "Legacy", "Comb+"};
+const juce::StringArray kFilterTypeNames{"Cycles", "Multimode", "Lowpass 4", "Equalizer", "Legacy", "Comb-", "Comb+"};
 const FilterTypeInfo kFilterTypes[7] = {
     {"Cutoff", "Reso", "", 64, 0, 0},
     {"Freq", "Reso", "Morph", 127, 0, 0},
     {"Freq", "Reso", "", 127, 0, 0},
     {"Freq", "Gain", "Q", 64, 64, 64},
-    {"Freq", "Fdbk", "LPF", 72, 0, 127},
     {"Freq", "Reso", "LP/HP", 127, 0, 0},
+    {"Freq", "Fdbk", "LPF", 72, 0, 127},
     {"Freq", "Fdbk", "LPF", 72, 0, 127},
 };
 const int kLfoDestValues[kNumLfoDests] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 29, 30, 31};
@@ -766,7 +766,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
         case Kind::Glide: break;   // read at each note
         case Kind::Filter:
             (std::strcmp(d.id, "ftype") ? filterExtra : filterType)[track] = v;
-            mc_engine_set_filter(engine, track, filterType[track], filterExtra[track]);
+            mc_engine_set_filter(engine, track, filterEngineType(filterType[track]), filterExtra[track]);
             break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::Level:

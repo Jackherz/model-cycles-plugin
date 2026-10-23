@@ -1468,6 +1468,16 @@ switching to the track played, if it is cheap.
         parameter 79): the cutoff follows the note, by a separate Key
         Tracking amount on the filter page. In the C filter (`tf_after`):
         the cutoff index offset by (note - centre) x amount.
+   n. **Better-sounding combs** (Jack, 2026-10-24). The DN2-fitted
+      Comb-/Comb+ (step 31) could sound better. Look through the Schwung
+      module catalogue on its website for a module whose GitHub repo has a
+      good comb filter algorithm to port (check its licence). Candidates to
+      judge by ear: tuning accuracy (fractional delay: allpass or cubic
+      instead of linear), feedback that rings without harshness (saturation
+      in the loop), and a damping filter that sounds natural.
+      - Done meanwhile: the TYPE menu lists Comb- and Comb+ together (Cycles,
+        Multimode, Lowpass 4, Equalizer, Legacy, Comb-, Comb+). The engine
+        keeps the DN2's numbering; `filterEngineType()` maps the menu to it.
    l. **Other delay and reverb engines** (Jack, 2026-10-23). Instead of the
       Model:Cycles' own delay and reverb:
       - Port the Syntakt's or the Digitone II's delay and reverb if

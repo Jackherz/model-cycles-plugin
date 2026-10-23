@@ -114,9 +114,9 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Filter Type",
       "Cycles: the original filter, low-pass left of centre, high-pass right, OFF in the middle. The others are the "
       "Digitone II's: Multimode (2-pole, MORPH from low-pass through band-pass to high-pass), Lowpass 4 (4-pole), "
-      "Equalizer (a bell: GAIN boosts or cuts around FREQ, Q sets the width), Comb- and Comb+ (a resonant comb "
-      "tuned to a note; FDBK makes it ring, LPF darkens it), Legacy (2-pole LP or HP). Picking a type here starts "
-      "it open, flat or dry."}},
+      "Equalizer (a bell: GAIN boosts or cuts around FREQ, Q sets the width), Legacy (2-pole LP or HP), Comb- and "
+      "Comb+ (a resonant comb tuned to a note; FDBK makes it ring, LPF darkens it). Picking a type here starts it "
+      "open, flat or dry."}},
     {"fextra",
      {"Filter: Third Knob",
       "What it does depends on the type: Multimode's MORPH (LP, BP at the middle, HP), the Equalizer's Q (wide to "

@@ -879,8 +879,8 @@ int main(int argc, char** argv)
         struct Case { int type, cut, res, extra; const char* name; };
         const Case cases[] = {{1, 72, 64, 0, "Multimode LP"}, {1, 72, 64, 64, "Multimode BP"}, {1, 80, 30, 127, "Multimode HP"},
                               {2, 72, 100, 0, "Lowpass 4"}, {3, 80, 127, 90, "Equalizer +12"}, {3, 80, 0, 64, "Equalizer -12"},
-                              {5, 72, 64, 0, "Legacy LP"}, {5, 80, 64, 127, "Legacy HP"}, {6, 72, 80, 127, "Comb+"},
-                              {4, 72, 80, 127, "Comb-"}};
+                              {4, 72, 64, 0, "Legacy LP"}, {4, 80, 64, 127, "Legacy HP"}, {6, 72, 80, 127, "Comb+"},
+                              {5, 72, 80, 127, "Comb-"}};
         bool ok = true;
         for (const auto& c : cases)
         {
@@ -898,13 +898,13 @@ int main(int argc, char** argv)
                 if (hz < 60 || hz > 12000 || sxx[(size_t)k] < floor)
                     continue;
                 const double measured = 20 * std::log10(std::abs(sxy[(size_t)k] / sxx[(size_t)k]) + 1e-12);
-                errs.push_back(std::abs(measured - mc_filter_db(c.type, c.cut, c.res, c.extra, hz)));
+                errs.push_back(std::abs(measured - mc_filter_db(cyclesemu::filterEngineType(c.type), c.cut, c.res, c.extra, hz)));
             }
             std::sort(errs.begin(), errs.end());
             const double median = errs[errs.size() / 2], p90 = errs[errs.size() * 9 / 10];
             // the combs' deep notches are where a measurement over a decaying
             // sound is least sure: a looser 90th percentile for them
-            const bool comb = c.type == 4 || c.type == 6;
+            const bool comb = c.type == 5 || c.type == 6;
             const bool good = median < 0.5 && p90 < (comb ? 3.0 : 2.0);
             ok &= good;
             std::printf("filter %-14s engine against its law: median %.2f dB, 90%% within %.2f dB%s\n", c.name, median, p90,

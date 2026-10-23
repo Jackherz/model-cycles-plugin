@@ -582,7 +582,7 @@ void FilterScope::paint(juce::Graphics& g)
     const int cut = juce::roundToInt(raw[0]->load()), res = juce::roundToInt(raw[1]->load());
     // the Digitone II's types: the engine's own laws (mc_filter_db)
     const int type = juce::roundToInt(raw[4]->load()), extra = juce::roundToInt(raw[5]->load());
-    const bool dn2 = type > 0, comb = type == 4 || type == 6;
+    const bool dn2 = type > 0, comb = type == 5 || type == 6;   // (the menu's numbers)
     const bool off = !dn2 && cut == 64, lp = cut < 64;
     const double fc = dn2 ? 5.0 * std::exp(0.065606 * cut)
                     : lp ? 20000.0 * std::pow(5.0 / 20000.0, (63 - cut) / 63.0)
@@ -611,7 +611,7 @@ void FilterScope::paint(juce::Graphics& g)
         const double hz = 20.0 * std::pow(1000.0, (double)x / p.getWidth());
         double db = 0.0;
         if (dn2)
-            db = mc_filter_db(type, cut, res, extra, hz);
+            db = mc_filter_db(filterEngineType(type), cut, res, extra, hz);
         else if (!off)
         {
             // the 2-pole state-variable filter's magnitude
@@ -727,7 +727,7 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                     const int v = juce::roundToInt(x);
                     return v == 64 ? juce::String("OFF") : v < 64 ? "L" + juce::String(64 - v) : "H" + juce::String(v - 64);
                 });
-            else if (type == 4 || type == 6)   // a comb's pitch: a note name
+            else if (type == 5 || type == 6)   // a comb's pitch: a note name
                 filterCut->setValueText([](double x) {
                     return juce::MidiMessage::getMidiNoteName(juce::roundToInt(x) - 12, true, true, 4);
                 });
@@ -744,7 +744,7 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                 });
             else
                 filterRes->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });
-            if (type == 5)
+            if (type == 4)   // Legacy
                 filterExtra->setValueText([](double x) { return juce::String(x < 63.5 ? "LP" : "HP"); });
             else
                 filterExtra->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });

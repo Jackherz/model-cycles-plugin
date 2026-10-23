@@ -94,7 +94,7 @@ void randomise(juce::AudioProcessorValueTreeState& st, int t, RandomSection s, j
             // within the type chosen (the Cycles' own, or a Digitone II one)
             const int type = current(st, t, "ftype");
             if (variation)
-                return type == 5 ? vary(st, t, {"fcut", "freso", "fenv", "fdec"}, d)   // Legacy: LP/HP stays
+                return type == 4 ? vary(st, t, {"fcut", "freso", "fenv", "fdec"}, d)   // Legacy: LP/HP stays
                                  : vary(st, t, {"fcut", "freso", "fextra", "fenv", "fdec"}, d);
             switch (type)
             {
@@ -116,7 +116,7 @@ void randomise(juce::AudioProcessorValueTreeState& st, int t, RandomSection s, j
                     set(st, t, "freso", d.bipolar(16, 60));
                     set(st, t, "fextra", d.between(40, 100));
                     break;
-                case 4:
+                case 5:
                 case 6:   // the combs: on a note related to C (fifths, octaves)
                     set(st, t, "fcut", d.pick({48, 55, 60, 67, 72, 79, 84, 91, 96}));
                     set(st, t, "freso", d.between(40, 110));

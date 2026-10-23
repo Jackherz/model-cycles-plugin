@@ -57,6 +57,13 @@ struct FilterTypeInfo
     int defCut, defRes, defExtra;
 };
 extern const FilterTypeInfo kFilterTypes[7];
+// The menu's order (the combs together) to the engine's type numbers
+// (mc_engine_set_filter: the DN2's own order).
+inline int filterEngineType(int menu)
+{
+    static const int map[7] = {0, 1, 2, 3, 5, 4, 6};
+    return map[menu < 0 ? 0 : menu > 6 ? 6 : menu];
+}
 constexpr int kNumLfoDests = 18;
 extern const int kLfoDestValues[kNumLfoDests];
 
