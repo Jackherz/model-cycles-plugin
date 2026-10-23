@@ -201,13 +201,13 @@ public:
     ModPanel(juce::AudioProcessorValueTreeState&, int track);
     void paint(juce::Graphics&) override;
     void resized() override;
-    std::function<void()> onClose;
+    bool keyPressed(const juce::KeyPress&) override;
+    std::function<void()> onClose;   // Esc (the page's Setup button closes it too)
     // the destination lists' entries, as the machine names its knobs
     void setDestText(int entry, const juce::String&);
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;   // vel 4 x (dest, depth), key 4 x, velvol, fkey
-    juce::TextButton close{"Close"};
     juce::Rectangle<int> velArea, keyArea, otherArea;
 };
 

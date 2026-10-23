@@ -660,11 +660,15 @@ ModPanel::ModPanel(juce::AudioProcessorValueTreeState& st, int t)
         }
     add("velvol", "Vel > Vol", S::Choice);
     add("fkey", "Filt Key", S::Knob);
-    close.onClick = [this] {
-        if (onClose)
-            onClose();
-    };
-    addAndMakeVisible(close);
+    setWantsKeyboardFocus(true);   // Esc closes it
+}
+
+bool ModPanel::keyPressed(const juce::KeyPress& k)
+{
+    if (k != juce::KeyPress::escapeKey || !onClose)
+        return false;
+    onClose();
+    return true;
 }
 
 void ModPanel::setDestText(int entry, const juce::String& text)
@@ -701,8 +705,7 @@ void ModPanel::resized()
     }
     auto o = otherArea.reduced(12, 8).withTrimmedTop(16);
     controls[16]->setBounds(o.removeFromTop(52));
-    controls[17]->setBounds(o.removeFromTop(juce::jmin(112, o.getHeight() - 40)));
-    close.setBounds(o.removeFromBottom(28).withSizeKeepingCentre(100, 26));
+    controls[17]->setBounds(o.removeFromTop(juce::jmin(112, o.getHeight())));
 }
 
 // SP TWINSHOT's page 1 (the macro knobs as Sample 1, Filter 1, Mix, Tune 2)
@@ -728,8 +731,15 @@ void TrackPage::refreshTwinNames()
 void TrackPage::showSetup(bool on)
 {
     modPanel.setVisible(on);
+    // one button opens and closes it, in the same place: over the panel too
+    setupButton.setButtonText(on ? "Close" : "Setup");
+    setupButton.setToggleState(on, juce::dontSendNotification);
     if (on)
+    {
         modPanel.toFront(false);
+        modPanel.grabKeyboardFocus();
+    }
+    setupButton.toFront(false);
 }
 
 TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterScope(proc, t), modPanel(proc.state(), t)
@@ -923,6 +933,11 @@ void TrackPage::resized()
     twinPage.setBounds(setupButton.getX() - 78, sound.getY() - 1, 72, 20);   // SP TWINSHOT only
     twinPage.toFront(false);
     modPanel.setBounds(getLocalBounds());
+    if (modPanel.isVisible())   // over the page, and its button over it
+    {
+        modPanel.toFront(false);
+        setupButton.toFront(false);
+    }
 }
 
 FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
