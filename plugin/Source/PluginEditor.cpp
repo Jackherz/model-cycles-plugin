@@ -11,7 +11,7 @@ constexpr int kW = 960, kH = 780;
 const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kMenu(4, 27, kW - 8, 20), kToolbar(10, 52, kW - 20, 124),
     kTabs(14, 180, kW - 28, 24);
 // CyclesFX has one page: no tabs, and a window only as tall as its page
-constexpr int kFxH = 500;
+constexpr int kFxH = 560;
 constexpr int kLogoW = 176;
 
 void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
@@ -871,13 +871,72 @@ FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
     };
     addAndMakeVisible(delay);
     addAndMakeVisible(reverb);
-    auto* dt = mk("delaytime", "Time");
-    auto* fb = mk("delayfeedback", "Feedback");
-    auto* sz = mk("reverbsize", "Size");
-    auto* tn = mk("reverbtone", "Tone");
-    delay.addRow({dt, fb});
-    reverb.addRow({sz, tn});
-    delay.minColumns = reverb.minColumns = 2;
+    auto choice = [&](const char* id) {
+        controls.push_back(std::make_unique<ParamControl>(st, paramId(kTracks, id), "Type", S::Choice));
+        return controls.back().get();
+    };
+    dTime = mk("delaytime", "Time");
+    dFb = mk("delayfeedback", "Fdbk");
+    dX = mk("delayx", "Random");
+    rSize = mk("reverbsize", "Size");
+    rTone = mk("reverbtone", "Tone");
+    rX = mk("reverbx", "Space");
+    auto* dType = choice("delaytype");
+    auto* rType = choice("reverbtype");
+    dType->preferredWidth = rType->preferredWidth = 180;
+    delay.addRow({dType});
+    delay.addRow({dTime, dFb, dX});
+    reverb.addRow({rType});
+    reverb.addRow({rSize, rTone, rX});
+    delay.minColumns = reverb.minColumns = 3;
+    // each engine's knobs (FxEngines.cpp): labels, and values as they mean them
+    delayTypeAtt = std::make_unique<juce::ParameterAttachment>(
+        *st.getParameter(paramId(kTracks, "delaytype")),
+        [this](float v) {
+            const int type = juce::roundToInt(v);
+            dTime->setLabel(type == 1 ? "Wand" : "Time");
+            dX->setLabel(type == 1 ? "Random" : type == 2 ? "Tone" : "-");
+            dX->setEnabled(type != 0);
+            if (type == 1)   // the Wand: down a clean echo, up melting into reverb
+                dTime->setValueText([](double x) {
+                    const int w = juce::roundToInt(x) - 64;
+                    return w == 0 ? juce::String("OFF") : (w < 0 ? "DN " : "UP ") + juce::String(std::abs(w));
+                });
+            else   // a note length, as the Cycles' own
+                dTime->setValueText([](double x) {
+                    const int v = juce::roundToInt(x);
+                    static const std::pair<int, const char*> names[] = {
+                        {2, "1/64"}, {4, "1/32"}, {6, "1/32."}, {8, "1/16"}, {12, "1/16."}, {16, "1/8"},
+                        {24, "1/8."}, {32, "1/4"}, {48, "1/4."}, {64, "1/2"}, {96, "1/2."}, {127, "1 BAR"}};
+                    for (auto [at, name] : names)
+                        if (v == at)
+                            return juce::String(name);
+                    return juce::String(v);
+                });
+        },
+        nullptr);
+    delayTypeAtt->sendInitialUpdate();
+    reverbTypeAtt = std::make_unique<juce::ParameterAttachment>(
+        *st.getParameter(paramId(kTracks, "reverbtype")),
+        [this](float v) {
+            const int type = juce::roundToInt(v);
+            static const char* sizes[] = {"Size", "Decay", "Time", "Decay"};
+            static const char* tones[] = {"Tone", "Hi Cut", "Lo-Pass", "Model"};
+            static const char* extras[] = {"-", "Space", "Diffuse", "Level"};
+            rSize->setLabel(sizes[type & 3]);
+            rTone->setLabel(tones[type & 3]);
+            rX->setLabel(extras[type & 3]);
+            rX->setEnabled(type != 0);
+            if (type == 3)   // PSX: the SPU's presets
+                rTone->setValueText([](double x) {
+                    static const char* models[] = {"ROOM", "STUDIO S", "STUDIO M", "STUDIO L", "HALL", "SPACE ECHO"};
+                    return juce::String(models[juce::jlimit(0, 5, juce::roundToInt(x) * 6 / 128)]);
+                });
+            else
+                rTone->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });
+        },
+        nullptr);
+    reverbTypeAtt->sendInitialUpdate();
     input.minColumns = 3;
     if (st.getParameter("fxdelay") != nullptr)   // CyclesFX
     {
@@ -902,15 +961,15 @@ void FxPage::paint(juce::Graphics& g)
     g.fillRect(icon.getCentreX() - 2, icon.getY() + 7, 4, 4);
     g.fillRect(icon.getCentreX() - 2, icon.getY() + 13, 4, 12);
     drawWrapped(g,
-                "Delay time is tempo-synced (32 = one beat). Reverb size 127 plays as 126 for now: as emulated it "
-                "never decays, while the hardware's does.",
+                "Delay and reverb: Cycles is the Model:Cycles' own. The others are open-source engines: CHOMPI "
+                "TEMPO's dual delay and reverb, a tape echo, CloudSeed, the PlayStation's SPU reverb.",
                 r.withTrimmedLeft(14).withTrimmedTop(2), kText);
 }
 
 void FxPage::resized()
 {
     auto r = getLocalBounds();
-    auto top = r.removeFromTop(190);
+    auto top = r.removeFromTop(236);
     if (hasInput)   // the input's sends and Mix first, then the two effects
         input.setBounds(top.removeFromLeft(top.getWidth() * 36 / 100).withTrimmedRight(6));
     delay.setBounds(top.removeFromLeft(top.getWidth() / 2).withTrimmedRight(6));

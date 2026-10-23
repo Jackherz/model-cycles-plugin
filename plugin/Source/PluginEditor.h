@@ -250,6 +250,9 @@ private:
     std::vector<std::unique_ptr<ParamControl>> controls;
     Section delay{"DELAY"}, reverb{"REVERB"}, input{"INPUT"};
     bool hasInput = false;   // CyclesFX: the sends' amounts and Mix
+    // the engines' knobs, relabelled (and their values shown) for each type
+    ParamControl *dTime = nullptr, *dFb = nullptr, *dX = nullptr, *rSize = nullptr, *rTone = nullptr, *rX = nullptr;
+    std::unique_ptr<juce::ParameterAttachment> delayTypeAtt, reverbTypeAtt;
     juce::Rectangle<int> noteArea;
 };
 

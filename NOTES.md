@@ -1487,6 +1487,65 @@ catalogue (`github.com/charlesvestal/schwung`, `module-catalog.json`,
     followed with median 0.4 dB. Its 90th percentile in the notches is
     allowed 3.5 dB.
 
+## Step 37: alternative delay and reverb engines (2026-10-23)
+
+Jack: other delay and reverb engines (Syntakt / DN2 if possible, CHOMPI's,
+good open-source ones such as the Schwung catalogue's), with a switch.
+- **Engines** (MIT, vendored unchanged in `plugin/ThirdParty/` with their
+  licences and `SOURCE.txt`; see its README):
+
+  | Slot | Type | Source |
+  |---|---|---|
+  | Delay | Cycles | the firmware's own |
+  | Delay | CHOMPI | CHOMPI TEMPO's dual delay (Schwung's Munchi Delay, on the firmware's own code): granular delay, compressor, and the Wand's up-side reverb |
+  | Delay | Tape | Schwung's Space Delay: a ping-pong echo with a tone filter |
+  | Reverb | Cycles | the firmware's own |
+  | Reverb | CloudSeed | Ghost Note Audio's CloudSeedCore, Schwung's C port |
+  | Reverb | CHOMPI | TEMPO's reverb, Mutable Instruments' Clouds / Rings Griesinger reverb |
+  | Reverb | PSX | the PlayStation SPU reverb with its six presets |
+
+  - Not used: MVerb, Tape Echo 2 and Dragonfly Hall (GPL-3).
+  - The Syntakt's and DN2's own effects are left for later. They would need
+    their firmware code translated (the Syntakt's on the same ColdFire
+    codebase) or the DN2's SHARC code; a reverb can't be fitted from
+    responses the way the filters were.
+- **How they run**:
+  - `build-stf` is translated with two more hooks, right after the delay's
+    call (`0x400569a2`) and the reverb's (`0x40056a32`).
+  - `mc_engine_set_fx(g, fn, user, delay_on, reverb_on)`: at each effect's
+    pre-call hook the send bus is its input (the host's input already
+    added). After the call, fn gets that input and the firmware's own
+    output, and its output replaces the firmware's (`0x8000ba90` delay,
+    `0x8000bb90` reverb, interleaved stereo Q31).
+  - The delay's output still feeds the reverb as the firmware routes it.
+  - The firmware's effects keep running on the same input, so switching
+    back is seamless. With both on Cycles the hooks are off: the firmware
+    path is untouched, and HostTest identity is still 0 samples.
+- **Plugin** (`Source/FxEngines.*`, `ThirdParty/wrap/`):
+  - Wrappers include each effect's source with its one exported symbol
+    renamed. CloudSeed, PSX and Space Echo run through Schwung's v2 API
+    (16-bit); CHOMPI's two run on their float path at their native 48 kHz.
+  - Engines are created when first chosen, on the message thread
+    (`AsyncUpdater`; CloudSeed's lines are 37 MB, CHOMPI's buffers
+    7.7 MB). The audio thread keeps the old engine until the new one
+    exists.
+  - A type change crossfades over 64 blocks (43 ms).
+  - Each engine's output is trimmed to the firmware's wet level at the same
+    settings, measured: CHOMPI x4.03, Tape x2.63, CloudSeed x0.347, CHOMPI
+    reverb x0.519, PSX x1.20.
+  - Knobs, with the FX page relabelled per type (and the value text):
+    - CHOMPI delay: Wand (TIME; 64 off), Fdbk, Random.
+    - Tape: Time (a note length at the tempo), Fdbk, Tone.
+    - CloudSeed: Decay, Hi Cut, Space.
+    - CHOMPI reverb: Time, Lo-Pass, Diffuse.
+    - PSX: Decay, Model (Room / Studio S / M / L / Hall / Space Echo),
+      Level.
+  - New FX parameters: `delaytype`, `delayx`, `reverbtype`, `reverbx`.
+  - CyclesFX's window is now 960x560, to fit the TYPE rows.
+- **EditorShot "fx engines"**: each type's wet signal (send up, less send
+  off) is within 0.1 dB of the Cycles' level after trims, all finite.
+  Rendering costs 4.3 % of real time (Cycles) to 5.5 % (CloudSeed).
+
 ## Next steps
 
 
@@ -1593,7 +1652,7 @@ catalogue (`github.com/charlesvestal/schwung`, `module-catalog.json`,
       - Done meanwhile: the TYPE menu lists Comb- and Comb+ together (Cycles,
         Multimode, Lowpass 4, Equalizer, Legacy, Comb-, Comb+). The engine
         keeps the DN2's numbering; `filterEngineType()` maps the menu to it.
-   l. **Other delay and reverb engines** (Jack, 2026-10-23). Instead of the
+   l. ~~Other delay and reverb engines~~: done, step 37 (the Syntakt / DN2's own effects left). Was: **Other delay and reverb engines** (Jack, 2026-10-23). Instead of the
       Model:Cycles' own delay and reverb:
       - Port the Syntakt's or the Digitone II's delay and reverb if
         possible. The Syntakt's runs on the same ColdFire codebase (the

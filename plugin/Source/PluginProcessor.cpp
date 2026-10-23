@@ -144,6 +144,12 @@ const ParamDef kFxParams[] = {
     {"delayfeedback", "Delay Feedback", 0x14, 0, 127, 86, Kind::Fx, Show::Plain},
     {"reverbsize", "Reverb Size", 0x16, 0, 127, 87, Kind::Fx, Show::Plain},
     {"reverbtone", "Reverb Tone", 0x18, 0, 127, 88, Kind::Fx, Show::Plain},
+    // the engines (NOTES.md step 37): the firmware's own, or a plugin-side
+    // one, each with a third knob
+    {"delaytype", "Delay Type", 0, 0, 2, -1, Kind::FxEngine, Show::Plain},
+    {"delayx", "Delay Random/Tone", 0, 0, 127, -1, Kind::FxEngine, Show::Plain},
+    {"reverbtype", "Reverb Type", 0, 0, 3, -1, Kind::FxEngine, Show::Plain},
+    {"reverbx", "Reverb Space/Diffusion", 0, 0, 127, -1, Kind::FxEngine, Show::Plain},
 };
 const int kNumFxParams = (int)(sizeof kFxParams / sizeof kFxParams[0]);
 
@@ -197,6 +203,8 @@ const juce::StringArray* choicesFor(const char* id)
         style{"Glide", "Glissando"};
     if (!std::strcmp(id, "notepri")) return &priority;
     if (!std::strcmp(id, "ftype")) return &kFilterTypeNames;
+    if (!std::strcmp(id, "delaytype")) return &kDelayTypeNames;
+    if (!std::strcmp(id, "reverbtype")) return &kReverbTypeNames;
     static const juce::StringArray velCurves{"Off", "Log", "Lin", "Exp"};
     if (!std::strcmp(id, "velvol")) return &velCurves;
     if (std::strlen(id) == 6 && (id[0] == 'v' || id[0] == 'k') && id[1] == 'm' && !std::strcmp(id + 3, "dst"))
@@ -361,6 +369,12 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
         for (int i = 0; i < kModParams; ++i)
             modRaw[t][i] = apvts.getRawParameterValue(paramId(t, modIds[i]));
     }
+    {
+        const char* ids[8] = {"delaytime", "delayfeedback", "reverbsize", "reverbtone",
+                              "delaytype", "delayx", "reverbtype", "reverbx"};
+        for (int i = 0; i < 8; ++i)
+            fxRaw[i] = apvts.getRawParameterValue(paramId(kTracks, ids[i]));
+    }
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the knobs the modulation adds to
         for (int k = 0; k < 33; ++k)
             knobValue[t][k] = mc_engine_get_param(engine, t, 0x14 + 2 * k);
@@ -431,12 +445,55 @@ void CyclesEmuProcessor::resetTrack(int t)
             case Kind::Glide: setPlain(apvts, id, (float)glideDefault(d.id)); break;
             case Kind::Filter: setPlain(apvts, id, 0.0f); break;
             case Kind::Mod: setPlain(apvts, id, (float)modDefault(d.id)); break;
-            case Kind::Fx: break;
+            case Kind::Fx:
+            case Kind::FxEngine: break;
         }
     }
 }
 
 void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
+
+// The delay's and reverb's engines (FxEngines.h, NOTES.md step 37). The
+// audio thread picks up the types; one not created yet is asked of the
+// message thread (an allocation), and the engine keeps the old one until it
+// is there. The render's hooks run only while a plugin-side engine plays or
+// fades: with both on Cycles the firmware's effects run untouched.
+void CyclesEmuProcessor::updateFxEngines()
+{
+    if (engine == nullptr || fxRaw[4] == nullptr)
+        return;
+    const int want[2] = {juce::roundToInt(fxRaw[4]->load()), juce::roundToInt(fxRaw[6]->load())};
+    bool ask = false;
+    for (int which = 0; which < 2; ++which)
+        if (fxEngines.ready(which, want[which]))
+            fxType[which] = want[which];
+        else
+            ask = true;
+    if (ask)
+        triggerAsyncUpdate();
+    mc_engine_set_fx(engine, &CyclesEmuProcessor::fxCallback, this, fxType[0] > 0 || fxEngines.fading(0),
+                     fxType[1] > 0 || fxEngines.fading(1));
+}
+
+void CyclesEmuProcessor::handleAsyncUpdate()
+{
+    fxEngines.ensure(0, juce::roundToInt(fxRaw[4]->load()));
+    fxEngines.ensure(1, juce::roundToInt(fxRaw[6]->load()));
+    fxRecheck = true;
+}
+
+void CyclesEmuProcessor::fxCallback(void* user, int which, const float* in, const float* fw, float* out)
+{
+    auto* p = static_cast<CyclesEmuProcessor*>(user);
+    cyclesemu::FxKnobs k;
+    auto v = [&](int i) { return juce::roundToInt(p->fxRaw[i]->load(std::memory_order_relaxed)); };
+    k.time = v(0), k.feedback = v(1), k.size = v(2), k.tone = v(3), k.delayx = v(5), k.reverbx = v(7);
+    k.bpm = p->appliedBpm > 0 ? p->appliedBpm : 120.0;
+    const bool wasFading = p->fxEngines.fading(which);
+    p->fxEngines.render(which, p->fxType[which], k, in, fw, out);
+    if (wasFading && !p->fxEngines.fading(which) && p->fxType[which] == 0)
+        p->fxRecheck = true;   // back on the firmware's: the hooks can go
+}
 
 float CyclesEmuProcessor::defaultFor(const juce::String& id) const
 {
@@ -488,13 +545,18 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                 case Kind::Level:
                 case Kind::Mute:
                 case Kind::Solo:
-                case Kind::Fx: break;
+                case Kind::Fx:
+                case Kind::FxEngine: break;
             }
         }
     return -1.0f;
 }
 
-CyclesEmuProcessor::~CyclesEmuProcessor() { mc_engine_free(engine); }
+CyclesEmuProcessor::~CyclesEmuProcessor()
+{
+    cancelPendingUpdate();
+    mc_engine_free(engine);
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayout()
 {
@@ -562,6 +624,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::Solo: return 0;
         case Kind::Glide: return glideDefault(s.def->id);
         case Kind::Filter: return 0;   // the Cycles' filter, as the firmware has it
+        case Kind::FxEngine: return std::strcmp(s.def->id, "delayx") && std::strcmp(s.def->id, "reverbx") ? 0 : 64;
         case Kind::Mod: return modDefault(s.def->id);
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
@@ -878,6 +941,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             mc_engine_set_filter(engine, track, filterEngineType(filterType[track]), filterExtra[track]);
             break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
+        case Kind::FxEngine: updateFxEngines(); break;
         case Kind::Level:
             levelNow[track] = v;
             applyMix();
@@ -1119,6 +1183,8 @@ void CyclesEmuProcessor::fxProcess(juce::AudioBuffer<float>& buffer)
 void CyclesEmuProcessor::renderEngineBlock()
 {
     applyParameterChanges();
+    if (fxRecheck.exchange(false))
+        updateFxEngines();
     updateGlides();
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {

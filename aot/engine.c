@@ -44,6 +44,11 @@ struct mc_engine {
     float in_delay, in_reverb;
     /* the smooth track filter (below), when on */
     int smooth_filter;
+    /* plugin-side delay / reverb engines (mc_engine_set_fx) */
+    mc_fx_fn fx_fn;
+    void *fx_user;
+    int fx_on[2];
+    float fx_in[2][64];
     struct tf_state {
         double ic1, ic2;             /* the SVF's integrators */
         double g, k, w;              /* coefficients and wet share where the last block ended */
@@ -69,6 +74,12 @@ struct mc_engine {
 #define FX_HOOK_DELAY  0x4005698cu
 #define FX_HOOK_REVERB 0x40056a1cu
 #define SEND_BUS       0x8000b990u
+/* right after each call (render built with these hooks too): the
+ * effect's output, interleaved stereo Q31 like the bus, 32 frames */
+#define FX_HOOK_DELAY_DONE  0x400569a2u
+#define FX_HOOK_REVERB_DONE 0x40056a32u
+#define DELAY_OUT           0x8000ba90u
+#define REVERB_OUT          0x8000bb90u
 
 static void fx_hook(mc_ctx *x, uint32_t pc)
 {
@@ -398,6 +409,33 @@ static void tf_after(mc_engine *g)
     }
 }
 
+/* Plugin-side effects: at each effect's call the bus is its input (the
+ * host input already added); after the call, the firmware's own output is
+ * replaced by the plugin's. The firmware's effect keeps running on the same
+ * input, so switching back to it is seamless. */
+static void fx_engine_hook(mc_engine *g, uint32_t pc)
+{
+    const int which = pc == FX_HOOK_DELAY || pc == FX_HOOK_DELAY_DONE ? 0 : 1;
+    if (!g->fx_on[which] || !g->fx_fn)
+        return;
+    const double norm = 1.0 / 2147483648.0;
+    if (pc == FX_HOOK_DELAY || pc == FX_HOOK_REVERB) {
+        for (int i = 0; i < 64; i++)
+            g->fx_in[which][i] = (float)((int32_t)mc_ld32(g->x, SEND_BUS + 4 * i) * norm);
+        return;
+    }
+    float fw[64], out[64];
+    const uint32_t at = which ? REVERB_OUT : DELAY_OUT;
+    for (int i = 0; i < 64; i++)
+        fw[i] = (float)((int32_t)mc_ld32(g->x, at + 4 * i) * norm);
+    g->fx_fn(g->fx_user, which, g->fx_in[which], fw, out);
+    for (int i = 0; i < 64; i++) {
+        double o = (double)out[i] * 2147483648.0;
+        o = o > 2147483647.0 ? 2147483647.0 : o < -2147483648.0 ? -2147483648.0 : o;
+        mc_st32_raw(g->x, at + 4 * i, (uint32_t)(int32_t)o);
+    }
+}
+
 static void engine_hook(mc_ctx *x, uint32_t pc)
 {
     mc_engine *g = x->hook_user;
@@ -406,13 +444,24 @@ static void engine_hook(mc_ctx *x, uint32_t pc)
             (pc == TF_HOOK_BEFORE ? tf_before : tf_after)(g);
         return;
     }
-    fx_hook(x, pc);
+    if (pc == FX_HOOK_DELAY || pc == FX_HOOK_REVERB)
+        fx_hook(x, pc);   /* the host's input onto the bus first */
+    fx_engine_hook(g, pc);
 }
 
 static void engine_update_hook(mc_engine *g)
 {
-    g->x->hook = g->in_l || g->smooth_filter ? engine_hook : NULL;
+    g->x->hook = g->in_l || g->smooth_filter || g->fx_on[0] || g->fx_on[1] ? engine_hook : NULL;
     g->x->hook_user = g;
+}
+
+void mc_engine_set_fx(mc_engine *g, mc_fx_fn fn, void *user, int delay_on, int reverb_on)
+{
+    g->fx_fn = fn;
+    g->fx_user = user;
+    g->fx_on[0] = delay_on && fn;
+    g->fx_on[1] = reverb_on && fn;
+    engine_update_hook(g);
 }
 
 void mc_engine_snap_param(mc_engine *g, int track, int offset)

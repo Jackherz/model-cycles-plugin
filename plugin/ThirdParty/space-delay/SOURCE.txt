@@ -1,0 +1,2 @@
+https://github.com/charlesvestal/schwung-space-delay @ 87e0cbf65cdb79933718e662552864d15080c714
+Modified for CyclesEmu: the SAMPLE_RATE define is guarded (#ifndef) so spacecho_wrap.c can set 48000.

@@ -55,6 +55,19 @@ else()
 endif()
 set_target_properties(mcengine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The alternative delay and reverb engines: Schwung audio effects (MIT),
+# vendored unchanged in ThirdParty/ with their licences, behind small
+# wrappers (ThirdParty/wrap, fxwrap.h)
+set(TP ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty)
+add_library(cyemfx STATIC ${TP}/wrap/cloudseed_wrap.c ${TP}/wrap/psxverb_wrap.c ${TP}/wrap/spacecho_wrap.c
+    ${TP}/wrap/chompi_wrap.cpp)
+target_include_directories(cyemfx PUBLIC ${TP}/wrap
+    PRIVATE ${TP}/munchi-delay ${TP}/munchi-delay/tempo ${TP}/munchi-delay/tempo/shim ${TP}/munchi-delay/daisysp)
+target_compile_options(cyemfx PRIVATE -O2 -w)
+target_compile_features(cyemfx PRIVATE cxx_std_17)
+set_target_properties(cyemfx PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+
 juce_add_plugin(CyclesEmu
     COMPANY_NAME "Personal"
     BUNDLE_ID "personal.cyclesemu"
@@ -67,12 +80,12 @@ juce_add_plugin(CyclesEmu
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
 
-target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
 target_compile_definitions(CyclesEmu PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 target_link_libraries(CyclesEmu
-    PRIVATE mcengine juce::juce_audio_utils
+    PRIVATE mcengine cyemfx juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 
@@ -89,12 +102,12 @@ juce_add_plugin(CyclesVoice
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
-target_sources(CyclesVoice PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_sources(CyclesVoice PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
 target_compile_definitions(CyclesVoice PUBLIC
     CYCLES_PRODUCT=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 target_link_libraries(CyclesVoice
-    PRIVATE mcengine juce::juce_audio_utils
+    PRIVATE mcengine cyemfx juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 
@@ -111,12 +124,12 @@ juce_add_plugin(CyclesFX
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
-target_sources(CyclesFX PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_sources(CyclesFX PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
 target_compile_definitions(CyclesFX PUBLIC
     CYCLES_PRODUCT=2 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 target_link_libraries(CyclesFX
-    PRIVATE mcengine juce::juce_audio_utils
+    PRIVATE mcengine cyemfx juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 
@@ -125,16 +138,16 @@ juce_add_console_app(CyclesEmuHostTest PRODUCT_NAME "CyclesEmuHostTest")
 target_sources(CyclesEmuHostTest PRIVATE Test/HostTest.cpp)
 target_compile_definitions(CyclesEmuHostTest PRIVATE
     JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-target_link_libraries(CyclesEmuHostTest PRIVATE mcengine
+target_link_libraries(CyclesEmuHostTest PRIVATE mcengine cyemfx
     juce::juce_audio_processors juce::juce_audio_formats juce::juce_gui_basics
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     "-framework CoreAudioKit")
 
 # Render the editor's pages to PNG, to check the layout without a host.
 juce_add_console_app(CyclesEmuEditorShot PRODUCT_NAME "CyclesEmuEditorShot")
-target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
+target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
 target_compile_definitions(CyclesEmuEditorShot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine juce::juce_audio_utils juce::juce_dsp
+target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine cyemfx juce::juce_audio_utils juce::juce_dsp
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 # The resampler against JUCE's WindowedSincInterpolator: quality and time.

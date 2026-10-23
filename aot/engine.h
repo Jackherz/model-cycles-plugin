@@ -40,6 +40,15 @@ void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n);
  * delay send and the reverb send, times the two amounts (0..1). l = NULL
  * stops it. Needs a render translated with --hook 4005698c --hook 40056a1c. */
 void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend);
+/* Plugin-side delay and reverb engines in place of the firmware's: fn is
+ * called each block, after the firmware's effect, with which (0 delay, 1
+ * reverb), its input (the send bus at the call: 32 interleaved stereo
+ * frames, full scale 1.0), the firmware's own output for the block (fw, the
+ * same layout: to measure it, or crossfade from it) and the output to fill,
+ * which replaces the firmware's. The delay's output feeds the reverb as the
+ * firmware routes it. Needs a render with --hook 400569a2 --hook 40056a32. */
+typedef void (*mc_fx_fn)(void *user, int which, const float *in, const float *fw, float *out);
+void mc_engine_set_fx(mc_engine *g, mc_fx_fn fn, void *user, int delay_on, int reverb_on);
 /* The track filter run here, its coefficients ramped per sample (engine.c),
  * instead of the firmware's block-stepped one; off (bit-exact) by default.
  * Needs a render translated with --hook 4014ab9c --hook 4014abe2. */

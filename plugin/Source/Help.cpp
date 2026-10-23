@@ -169,6 +169,20 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Delay Time",
       "The delay time, synced to tempo: 32 is one beat. Note lengths show by name (1/16, 1/8., 1/4...) and the "
       "knob snaps to them as you turn it; hold Alt to turn freely."}},
+    {"delaytype",
+     {"Delay Type",
+      "Cycles: the Model:Cycles' own delay. CHOMPI: CHOMPI TEMPO's dual delay (open source, MIT): WAND down from the "
+      "middle is a clean echo locked to the tempo, from 1 bar to 1/16; up from the middle it melts into reverb; "
+      "RANDOM makes repeats jump an octave, reverse or retrigger. Tape: a ping-pong tape echo (Schwung's Space "
+      "Delay, MIT) with TONE darkening the repeats."}},
+    {"delayx", {"Delay: Third Knob", "CHOMPI: Random (octave, reverse and retrigger jumps). Tape: Tone."}},
+    {"reverbtype",
+     {"Reverb Type",
+      "Cycles: the Model:Cycles' own reverb. CloudSeed: Ghost Note Audio's lush algorithmic reverb (MIT): DECAY, "
+      "HI CUT and SPACE (the room's size). CHOMPI: CHOMPI TEMPO's reverb (Mutable Instruments' Clouds reverb, MIT): "
+      "TIME, LO-PASS and DIFFUSE. PSX: the PlayStation's SPU reverb (MIT emulation): DECAY, the MODEL (Room, "
+      "Studio S/M/L, Hall, Space Echo) and LEVEL."}},
+    {"reverbx", {"Reverb: Third Knob", "CloudSeed: Space (room size). CHOMPI: Diffusion. PSX: Level."}},
     {"delayfeedback",
      {"Delay Feedback", "How much of the delay feeds back into itself. High values repeat for a long time."}},
     {"reverbsize",

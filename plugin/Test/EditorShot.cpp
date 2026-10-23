@@ -1128,6 +1128,69 @@ int main(int argc, char** argv)
             cyclesemu::setPlain(proc.state(), id, 0);
     }
 
+    // the delay and reverb engines: each type's wet signal (a render with
+    // the send up, less one without), its level against the firmware's own,
+    // its CPU; and nothing non-finite
+    {
+        auto wetOf = [](int which, int type, double& seconds) {
+            auto render = [&](int send) {
+                CyclesEmuProcessor f(Product::Full);
+                cyclesemu::setPlain(f.state(), "midimode", 1);
+                cyclesemu::setPlain(f.state(), "t1_machine", 4);
+                cyclesemu::setPlain(f.state(), "t1_decay", 40);
+                cyclesemu::setPlain(f.state(), "t1_delaysend", which == 0 ? (float)send : 0.0f);
+                cyclesemu::setPlain(f.state(), "t1_reverbsend", which == 1 ? (float)send : 0.0f);
+                cyclesemu::setPlain(f.state(), which == 0 ? "fx_delaytype" : "fx_reverbtype", (float)type);
+                cyclesemu::setPlain(f.state(), "fx_delayfeedback", 60);
+                f.createFxEnginesNow();
+                f.prepareToPlay(48000, 32);
+                juce::AudioBuffer<float> buf(2, 32);
+                std::vector<float> out;
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                for (int b = 0; b < 1500 + 6000; ++b)
+                {
+                    juce::MidiBuffer midi;
+                    if (b >= 1500 && (b - 1500) % 1500 == 0)
+                        midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                    buf.clear();
+                    f.processBlock(buf, midi);
+                    if (b >= 1500)
+                        for (int i = 0; i < 32; ++i)
+                            out.push_back(buf.getSample(0, i)), out.push_back(buf.getSample(1, i));
+                }
+                seconds = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - t0);
+                return out;
+            };
+            const auto with = render(110), without = render(0);   // (the time: the last render, 5 s of audio)
+            double e = 0;
+            bool finite = true;
+            for (size_t i = 0; i < with.size(); ++i)
+            {
+                const double d = (double)with[i] - without[i];
+                finite &= std::isfinite(d);
+                e += d * d;
+            }
+            return finite ? std::sqrt(e / (double)with.size()) : -1.0;
+        };
+        bool ok = true;
+        for (int which = 0; which < 2; ++which)
+        {
+            double base = 0;
+            for (int type = 0; type < (which ? cyclesemu::kReverbTypes : cyclesemu::kDelayTypes); ++type)
+            {
+                double secs = 0;
+                const double wet = wetOf(which, type, secs);
+                if (type == 0)
+                    base = wet;
+                ok &= wet > 0 && std::abs(20 * std::log10(wet / base)) < 6.0;
+                std::printf("fx engines: %s %-9s wet %.4f (%+.1f dB against Cycles), render %.1f %% of real time\n",
+                            which ? "reverb" : "delay", (which ? cyclesemu::kReverbTypeNames : cyclesemu::kDelayTypeNames)[type]
+                                .toRawUTF8(), wet, wet > 0 ? 20 * std::log10(wet / base) : -99.0, secs / 5.0 * 100.0);
+            }
+        }
+        std::printf("fx engines: every type plays, finite, within 6 dB of the Cycles' level -> %s\n", ok ? "PASS" : "FAIL");
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"7", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

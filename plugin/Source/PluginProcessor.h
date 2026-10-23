@@ -6,6 +6,7 @@
 #include "engine.h"
 #include "DcBlock.h"
 #include "Resampler.h"
+#include "FxEngines.h"
 
 namespace cyclesemu
 {
@@ -26,6 +27,7 @@ enum class Kind
     Glide,      // legato and portamento: the plugin's, read at each note
     Filter,     // the filter's type and third knob (mc_engine_set_filter)
     Mod,        // velocity and key modulation, as the Syntakt's SOUND SETUP: read at each note
+    FxEngine,   // the delay's / reverb's engine and third knob (FxEngines.cpp)
 };
 
 // How the editor and the host show its value.
@@ -92,7 +94,7 @@ enum class Product { Full, Voice, Fx };
 #define CYCLES_PRODUCT 0
 #endif
 
-class CyclesEmuProcessor : public juce::AudioProcessor
+class CyclesEmuProcessor : public juce::AudioProcessor, private juce::AsyncUpdater
 {
 public:
     explicit CyclesEmuProcessor(Product = (Product)CYCLES_PRODUCT);
@@ -144,6 +146,7 @@ public:
     // for tests: what the engine holds (a sound word, or -1 level, -2 mute)
     int peek(uint32_t addr) const { return mc_engine_peek(engine, addr); }
     void setSmoothFilter(bool on) { mc_engine_set_smooth_filter(engine, on); }
+    void createFxEnginesNow() { handleAsyncUpdate(); }   // tests: no message loop
     void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }
     uint32_t kitAddress() const { return mc_engine_kit(engine); }
     int engineValue(int track, int offset) const
@@ -237,6 +240,15 @@ private:
     int knobValue[cyclesemu::kTracks][33] = {};   // the knob (host parameter) per word, as last applied
     void applyNoteMods(int track, int note, int velocity);
     int velocityToVol(int page, int velocity) const;
+    // the delay and reverb engines (FxEngines.h): created on the message
+    // thread when first chosen, run from the engine's render
+    cyclesemu::FxEngines fxEngines;
+    void handleAsyncUpdate() override;   // creates engines the audio thread asked for
+    void updateFxEngines();              // audio thread: the types chosen, to the engine
+    static void fxCallback(void* user, int which, const float* in, const float* fw, float* out);
+    std::atomic<float>* fxRaw[8] = {};   // time, feedback, size, tone, delaytype, delayx, reverbtype, reverbx
+    int fxType[2] = {0, 0};              // the types the engines run (audio thread)
+    std::atomic<bool> fxRecheck{false};  // an engine became ready, or a fade ended
     void updateGlides();
     void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
     // Mute and Solo as on a mixer: the firmware's mute only stops sequencer
