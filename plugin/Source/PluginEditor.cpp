@@ -1082,15 +1082,6 @@ static juce::PropertiesFile& settings()
 juce::PopupMenu CyclesEmuEditor::viewMenu()
 {
     juce::PopupMenu m;
-    if (proc.trackPages() > 1)
-    {
-        m.addItem("Follow Played Track", true, follow, [this] {
-            follow = !follow;
-            settings().setValue("followPlayed", follow);
-            settings().saveIfNeeded();
-        });
-        m.addSeparator();
-    }
     for (int i = 0; i < kNumThemes; ++i)
         m.addItem(juce::String("Colour: ") + kThemeNames[i], true, currentTheme() == i, [this, i] { setTheme(i); });
     return m;
@@ -1239,7 +1230,6 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     sendLookAndFeelChange();
     setSize(kW, kH);
     showPage(0);
-    follow = settings().getBoolValue("followPlayed", true);
     for (int t = 0; t < proc.trackPages(); ++t)
         seenTrigs[t] = proc.trigCount(t);
     startTimerHz(30);   // the tab lights; the status line only changes when its text does
@@ -1460,10 +1450,9 @@ void HelpBubble::paint(juce::Graphics& g)
     drawWrapped(g, text.body, in, body);
 }
 
-// A track's tab chip lights for 150 ms when it is played. With Follow
-// Played Track, a track page gives way to the track played last, as the
-// Digitakt's display follows the track triggered: not from the mixer or the
-// FX page, and at most four times a second, so a pattern does not flicker.
+// A track's tab chip lights for 150 ms when it is played. The page stays
+// where it is (following the track played made editing another track
+// impossible while a pattern ran).
 void CyclesEmuEditor::updateTrigLights()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
@@ -1478,14 +1467,6 @@ void CyclesEmuEditor::updateTrigLights()
             tabs[t]->getProperties().set("lit", lit);
             tabs[t]->repaint();
         }
-    }
-    // follow a track played just now (lit), from a track page only
-    const int last = proc.lastTriggered();
-    if (follow && proc.trackPages() > 1 && current < proc.trackPages() && last >= 0 && last != current
-        && now < litUntil[last] && now - lastFollow >= 250.0)
-    {
-        showPage(last);
-        lastFollow = now;
     }
 }
 

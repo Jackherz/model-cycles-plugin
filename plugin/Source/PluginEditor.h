@@ -325,10 +325,9 @@ private:
     void remember(const juce::String& what);
     juce::Random rng;
     juce::OwnedArray<juce::TextButton> tabs;
-    // the tab lights and Follow Played Track (View menu, kept in the settings)
+    // the tab lights: which tracks are being played
     uint32_t seenTrigs[cyclesemu::kTracks] = {};
-    double litUntil[cyclesemu::kTracks] = {}, lastFollow = 0;
-    bool follow = true;
+    double litUntil[cyclesemu::kTracks] = {};
     juce::OwnedArray<juce::Component> pages;
     int current = 0;
 };

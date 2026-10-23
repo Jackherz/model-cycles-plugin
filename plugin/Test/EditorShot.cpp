@@ -913,22 +913,18 @@ int main(int argc, char** argv)
         std::printf("filter types: the engine follows the drawn response -> %s\n", ok ? "PASS" : "FAIL");
     }
 
-    // the tab lights and Follow Played Track: drum-map notes for tracks 3
-    // and 5, on a track page and on the mixer
+    // the tab lights: a drum-map note for track 3 lights its tab (and only
+    // its), the page stays put, and the light goes out after 150 ms
     {
         proc.prepareToPlay(48000, 128);
         juce::AudioBuffer<float> buf(2, 128);
-        auto hit = [&](int note) {
-            juce::MidiBuffer midi;
-            midi.addEvent(juce::MidiMessage::noteOn(1, note, (juce::uint8)100), 0);
-            buf.clear();
-            proc.processBlock(buf, midi);
-            e->updateTrigLights();
-        };
         e->showPage(0);
-        juce::Thread::sleep(300);
-        hit(38);   // track 3
-        const bool followed = e->currentPage() == 2, lit = e->tabLit(2), otherDark = !e->tabLit(0);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 38, (juce::uint8)100), 0);   // track 3
+        buf.clear();
+        proc.processBlock(buf, midi);
+        e->updateTrigLights();
+        const bool stayed = e->currentPage() == 0, lit = e->tabLit(2), otherDark = !e->tabLit(0);
         {
             auto img = e->createComponentSnapshot(e->getLocalBounds().withHeight(220), true, 1.0f);
             auto f = out.getChildFile("editor-tab-lit.png");
@@ -939,15 +935,9 @@ int main(int argc, char** argv)
         juce::Thread::sleep(300);
         e->updateTrigLights();
         const bool unlit = !e->tabLit(2);
-        e->showPage(6);   // the mixer
-        hit(40);          // track 5: lights, but the mixer stays
-        const bool stayed = e->currentPage() == 6, lit5 = e->tabLit(4);
-        std::printf("follow played track: a note on track 3 shows its page %s, lights its tab %s (track 1's dark %s, "
-                    "out after 150 ms %s); on the mixer a note on track 5 lights it %s and the mixer stays %s -> %s\n",
-                    followed ? "yes" : "no", lit ? "yes" : "no", otherDark ? "yes" : "no", unlit ? "yes" : "no",
-                    lit5 ? "yes" : "no", stayed ? "yes" : "no",
-                    followed && lit && otherDark && unlit && stayed && lit5 ? "PASS" : "FAIL");
-        e->showPage(0);
+        std::printf("tab lights: a note on track 3 lights its tab %s (track 1's dark %s), the page stays %s, out after "
+                    "150 ms %s -> %s\n", lit ? "yes" : "no", otherDark ? "yes" : "no", stayed ? "yes" : "no",
+                    unlit ? "yes" : "no", lit && otherDark && stayed && unlit ? "PASS" : "FAIL");
     }
 
     // the help mode, as if hovering over a few controls
