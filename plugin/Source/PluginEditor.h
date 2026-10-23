@@ -34,6 +34,10 @@ public:
     void setLabel(const juce::String&);   // a new caption (knobs, toggles)
     void setItemText(int index, const juce::String&);   // a choice's entry, as shown
     juce::String itemText(int index) const;
+    // a choice picked in the UI (not by the host, a preset or an undo)
+    std::function<void(int)> onPicked;
+    // how a knob shows its value, instead of the parameter's text
+    void setValueText(std::function<juce::String(double)>);
     Style style;
     juce::String paramID;
     int preferredWidth = 0;   // in a row without knobs; 0 shares the rest
@@ -71,7 +75,8 @@ private:
     juce::ComboBox box;
     juce::ToggleButton toggle;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> knobAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> boxAtt;
+    std::unique_ptr<juce::ParameterAttachment> boxAtt;   // the box follows it; a pick sets it
+    bool boxUpdating = false;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> toggleAtt;
 };
 
@@ -183,8 +188,8 @@ public:
 
 private:
     void timerCallback() override;
-    std::atomic<float>* raw[4];
-    int shown[4] = {-1, -1, -1, -1};
+    std::atomic<float>* raw[6];   // cutoff, reso, env, decay, type, third knob
+    int shown[6] = {-1, -1, -1, -1, -1, -1};
 };
 
 class TrackPage : public juce::Component
@@ -203,6 +208,9 @@ private:
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
     ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
+    // the filter's knobs, relabelled (and their values shown) for its type
+    ParamControl *filterCut = nullptr, *filterRes = nullptr, *filterExtra = nullptr;
+    std::unique_ptr<juce::ParameterAttachment> filterTypeAtt;
     juce::Random rng;
     std::unique_ptr<juce::ParameterAttachment> machineAtt;
     ParamControl* make(juce::AudioProcessorValueTreeState&, int track, const char* id, const juce::String& label,

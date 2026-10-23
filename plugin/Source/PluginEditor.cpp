@@ -71,7 +71,22 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
             caption.setJustificationType(juce::Justification::centredLeft);
             box.addItemList(p->getAllValueStrings(), 1);
             addAndMakeVisible(box);
-            boxAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, id, box);
+            boxAtt = std::make_unique<juce::ParameterAttachment>(
+                *p,
+                [this](float v) {
+                    const juce::ScopedValueSetter<bool> updating(boxUpdating, true);
+                    box.setSelectedItemIndex(juce::roundToInt(v), juce::dontSendNotification);
+                },
+                nullptr);
+            box.onChange = [this] {
+                if (boxUpdating)
+                    return;
+                const int i = box.getSelectedItemIndex();
+                boxAtt->setValueAsCompleteGesture((float)i);
+                if (onPicked)
+                    onPicked(i);
+            };
+            boxAtt->sendInitialUpdate();
             break;
         case Style::Switch:
             toggle.getProperties().set("switch", true);
@@ -130,6 +145,12 @@ void ParamControl::setItemText(int index, const juce::String& text)
 }
 
 juce::String ParamControl::itemText(int index) const { return box.getItemText(index); }
+
+void ParamControl::setValueText(std::function<juce::String(double)> f)
+{
+    knob.textFromValueFunction = std::move(f);
+    knob.updateText();
+}
 
 void ParamControl::resized()
 {
@@ -532,8 +553,8 @@ void CodecTempo::paint(juce::Graphics& g)
 
 FilterScope::FilterScope(CyclesEmuProcessor& p, int t)
 {
-    const char* ids[] = {"fcut", "freso", "fenv", "fdec"};
-    for (int i = 0; i < 4; ++i)
+    const char* ids[] = {"fcut", "freso", "fenv", "fdec", "ftype", "fextra"};
+    for (int i = 0; i < 6; ++i)
         raw[i] = p.state().getRawParameterValue(paramId(t, ids[i]));
     getProperties().set("helpId", paramId(t, "fcut"));
     setInterceptsMouseClicks(false, false);
@@ -545,7 +566,7 @@ void FilterScope::timerCallback()
     if (!isShowing())
         return;
     bool changed = false;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
         if (int v = juce::roundToInt(raw[i]->load()); v != shown[i])
             shown[i] = v, changed = true;
     if (changed)
@@ -559,8 +580,12 @@ void FilterScope::paint(juce::Graphics& g)
     // Q 0.5 .. 50 over the resonance knob. Approximate: the exact table
     // is in the tweak's code.
     const int cut = juce::roundToInt(raw[0]->load()), res = juce::roundToInt(raw[1]->load());
-    const bool off = cut == 64, lp = cut < 64;
-    const double fc = lp ? 20000.0 * std::pow(5.0 / 20000.0, (63 - cut) / 63.0)
+    // the Digitone II's types: the engine's own laws (mc_filter_db)
+    const int type = juce::roundToInt(raw[4]->load()), extra = juce::roundToInt(raw[5]->load());
+    const bool dn2 = type > 0, comb = type == 4 || type == 6;
+    const bool off = !dn2 && cut == 64, lp = cut < 64;
+    const double fc = dn2 ? 5.0 * std::exp(0.065606 * cut)
+                    : lp ? 20000.0 * std::pow(5.0 / 20000.0, (63 - cut) / 63.0)
                          : 5.0 * std::pow(19000.0 / 5.0, (cut - 65) / 62.0);
     const double q = 0.5 * std::pow(100.0, res / 127.0);
 
@@ -585,7 +610,9 @@ void FilterScope::paint(juce::Graphics& g)
     {
         const double hz = 20.0 * std::pow(1000.0, (double)x / p.getWidth());
         double db = 0.0;
-        if (!off)
+        if (dn2)
+            db = mc_filter_db(type, cut, res, extra, hz);
+        else if (!off)
         {
             // the 2-pole state-variable filter's magnitude
             const double u = hz / fc, den = std::sqrt((1 - u * u) * (1 - u * u) + (u / q) * (u / q));
@@ -595,7 +622,7 @@ void FilterScope::paint(juce::Graphics& g)
         g.fillRect(p.getX() + x, prev < 0 ? y : juce::jmin(prev, y), 2, prev < 0 ? 2 : std::abs(prev - y) + 2);
         prev = y;
     }
-    if (!off)   // the cutoff's mark
+    if (!off && !comb && type != 3)   // the cutoff's mark (a comb's or a bell's is plain to see)
     {
         g.setColour(kPhosphorDim);
         g.fillRect(xOf(juce::jlimit(20.0, 20000.0, fc)), p.getY(), 1, p.getHeight());
@@ -669,13 +696,68 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     lfo.addRow({make(st, t, "lfospeed", "Speed", S::Knob), make(st, t, "lfodepth", "Depth", S::Knob),
                 make(st, t, "lfofade", "Fade", S::Knob), make(st, t, "lfophase", "Phase", S::Knob)});
     addAndMakeVisible(filter);
-    filter.addRow({make(st, t, "fcut", "Cutoff", S::Knob), make(st, t, "freso", "Reso", S::Knob),
-                   make(st, t, "fenv", "Env", S::Knob), make(st, t, "fdec", "Decay", S::Knob)});
+    auto* ftype = make(st, t, "ftype", "Type", S::Choice);
+    ftype->preferredWidth = 240;
+    filter.addRow({ftype});
+    filterCut = make(st, t, "fcut", "Cutoff", S::Knob);
+    filterRes = make(st, t, "freso", "Reso", S::Knob);
+    filterExtra = make(st, t, "fextra", "Morph", S::Knob);
+    filter.addRow({filterCut, filterRes, filterExtra, make(st, t, "fenv", "Env", S::Knob),
+                   make(st, t, "fdec", "Decay", S::Knob)});
+    // a type picked here starts from its own defaults (the DN2's: open,
+    // flat or dry), as on the hardware; a preset brings its own settings
+    ftype->onPicked = [&st, t](int type) {
+        const auto& info = kFilterTypes[juce::jlimit(0, 6, type)];
+        setPlain(st, paramId(t, "fcut"), (float)info.defCut);
+        setPlain(st, paramId(t, "freso"), (float)info.defRes);
+        setPlain(st, paramId(t, "fextra"), (float)info.defExtra);
+    };
+    filterTypeAtt = std::make_unique<juce::ParameterAttachment>(
+        *st.getParameter(paramId(t, "ftype")),
+        [this](float v) {
+            const int type = juce::jlimit(0, 6, juce::roundToInt(v));
+            const auto& info = kFilterTypes[type];
+            filterCut->setLabel(info.cut);
+            filterRes->setLabel(info.res);
+            filterExtra->setLabel(*info.extra ? info.extra : "-");
+            filterExtra->setEnabled(*info.extra != 0);
+            // values as the type means them
+            if (type == 0)
+                filterCut->setValueText([](double x) {
+                    const int v = juce::roundToInt(x);
+                    return v == 64 ? juce::String("OFF") : v < 64 ? "L" + juce::String(64 - v) : "H" + juce::String(v - 64);
+                });
+            else if (type == 4 || type == 6)   // a comb's pitch: a note name
+                filterCut->setValueText([](double x) {
+                    return juce::MidiMessage::getMidiNoteName(juce::roundToInt(x) - 12, true, true, 4);
+                });
+            else
+                filterCut->setValueText([](double x) {
+                    const double hz = 5.0 * std::exp(0.065606 * x);
+                    return hz < 1000.0 ? juce::String(juce::roundToInt(hz)) + "HZ"
+                                       : juce::String(hz / 1000.0, hz < 10000.0 ? 2 : 1) + "K";
+                });
+            if (type == 3)
+                filterRes->setValueText([](double x) {
+                    const double db = (x - 64.0) * 3.0 / 16.0;
+                    return (db > 0 ? "+" : "") + juce::String(db, 1) + "DB";
+                });
+            else
+                filterRes->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });
+            if (type == 5)
+                filterExtra->setValueText([](double x) { return juce::String(x < 63.5 ? "LP" : "HP"); });
+            else
+                filterExtra->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });
+            filterScope.repaint();
+        },
+        nullptr);
+    filterTypeAtt->sendInitialUpdate();
     addAndMakeVisible(filterScope);
     // legato and portamento; the rest of the Syntakt's setup in the Track menu
     addAndMakeVisible(glide);
-    glide.addRow({make(st, t, "port", "Port", S::Switch), make(st, t, "legato", "Legato", S::Switch),
-                  make(st, t, "ptim", "Time", S::Knob), make(st, t, "pamount", "Amount", S::Knob)});
+    glide.addRow({make(st, t, "port", "Port", S::Switch), make(st, t, "legato", "Legato", S::Switch)});
+    glide.addRow({make(st, t, "ptim", "Time", S::Knob), make(st, t, "pamount", "Amount", S::Knob)});
+    glide.minColumns = 2;
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
         section->enableDice([this, &st, t, which = which](bool variation) {
@@ -690,10 +772,10 @@ void TrackPage::resized()
     auto r = getLocalBounds();
     // the filter page along the bottom: its knobs, and the response beside
     // and the glide's to the right
-    auto bottom = r.removeFromBottom(162).withTrimmedTop(6);
+    auto bottom = r.removeFromBottom(204).withTrimmedTop(6);
     const int w = bottom.getWidth();
-    glide.setBounds(bottom.removeFromRight(w * 42 / 100).withTrimmedLeft(6));
-    filter.setBounds(bottom.removeFromLeft(w * 38 / 100).withTrimmedRight(6));
+    glide.setBounds(bottom.removeFromRight(w * 24 / 100).withTrimmedLeft(6));
+    filter.setBounds(bottom.removeFromLeft(w * 50 / 100).withTrimmedRight(6));
     filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedRight(6).withTrimmedTop(8));
     sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
     lfo.setBounds(r.withTrimmedLeft(6));

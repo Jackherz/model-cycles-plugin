@@ -1295,6 +1295,67 @@ times.
   - GLIDE: PORT and LEGATO are switch plates, capped at a button's height.
   - Times show compactly ("104ms", "1.25s").
 
+## Step 31: the Digitone II's filter types; post-fader meters (2026-10-24)
+
+The filter page's TYPE: Cycles (Modded-Cycles' own, as before) or one of
+the Digitone II's six filter machines, re-created from its DSP code.
+- **Measuring** (`~/Documents/AI/digitone2-plugin/scripts/filter_response.py`,
+  `filter_raw.py`, `filter_raw2.py`; data in its `data/`, not committed):
+  - A Wavetone voice plays only noise (oscillators off) through the real
+    DSP code (dn2-cfw's sharcvm, about 1.3 s a render). The noise is
+    identical on every render, so cross-spectrum over the input gives each
+    setting's complex response. The input is Comb- with no feedback, which
+    is exactly flat.
+  - Frame word `0xb4 + 2r` is the type. Parameters 67/68/66 are FREQ, the
+    second knob and the third.
+  - No note tracking: KEY.T (79) is 0 by default.
+- **The laws** (`aot/engine.c`, `dn2_coefs`). FREQ is v = 0-127, and
+  fc = 5 Hz x e^(0.065606 v), so 64 is 333 Hz and 127 is 20.8 kHz.
+
+  | Type | Model | Laws | Fit |
+  |---|---|---|---|
+  | Multimode | TPT SVF | Damping k over RESO from a 17-point table (Q 0.5-19.7). MORPH 0-127 crossfades LP, BP, HP at equal power, angle (pi/2)(u - 0.04 sin 2 pi u) per half. | about 0.01-0.27 dB |
+  | Lowpass 4 | Zero-delay ladder, four TPT one-poles, gain-compensated | Output (1 + r) y4 with r = 3.45 (reso/127)^2 | 0.02-0.05 dB |
+  | Equalizer | SVF bell, (s^2 + A k s + 1) / (s^2 + (k/A) s + 1) | Gain (g - 64) x 3/16 dB (about +-12); Q = 0.5 e^(0.0287 (q - 64)) | 0.01-0.03 dB |
+  | Comb+ / Comb- | Feedback comb, linear-interpolated delay, one-pole low-pass in the loop | FREQ in semitones (72 = C4). Feedback 1 - (1 - fb/127)^3, at most 0.997 (Comb+) or 0.951 (Comb-). The LPF coefficient and an output trim at high feedback come from tables; output = trim (x + 1.05 g e). | 0.1-0.8 dB with LPF open, 1-3 dB with it closed |
+  | Legacy | Chamberlin SVF | F and q tables over FREQ; q x e^(-0.02925 reso); F rises toward 2 sin(pi fc/fs) with resonance. HP is exactly input minus LP. TYPE value 2 measured flat and is left out. | 0.02-0.1 dB at low resonance |
+
+- **Engine**:
+  - `mc_engine_set_filter(g, track, type, extra)` sets a track's type and
+    third knob. The cutoff and reso words (k28/k29: knob, LFO, smoothing)
+    drive FREQ and RESO / GAIN / FEEDBACK. The envelope moves FREQ by up to
+    +-64 steps.
+  - Coefficients ramp per sample, as step 29's filter does. A new type
+    starts from rest.
+  - `mc_filter_db()` gives a type's magnitude, which the filter screen
+    draws.
+- **Plugin**:
+  - Parameters `ftype` (Cycles / Multimode / Lowpass 4 / Equalizer /
+    Comb- / Legacy / Comb+) and `fextra`, listed before the knobs so a
+    preset sets the type first.
+  - A type picked in the UI starts from the DN2's defaults: open, flat or
+    dry (`kFilterTypes`). Choice boxes now report UI picks (`onPicked`);
+    hosts, presets and undo don't trigger them.
+  - The knob labels and value text follow the type: Hz, a note name for
+    the combs, dB for the EQ's gain, LP/HP for Legacy.
+  - Randomise Filter stays within the type, using its sweet spots.
+  - Layout: a TYPE row; GLIDE's switches stacked above its knobs.
+- **Checks**:
+  - EditorShot: Metal (broadband) through each type. The engine's response
+    against `mc_filter_db` has median 0.00-0.04 dB and 90 % within 0.36 dB;
+    combs have median 0.3 dB and 90 % within 2.5 dB in their notches.
+  - Against the DN2's own measurements, within 0.7 dB away from
+    coarse-bin artefacts.
+  - CPU: six Chord tracks at 9.5 % (Cycles), 9.4-10.8 % with a DN2 type
+    on all six.
+- **Post-fader meters** (Jack): the mixer's meters were pre-level.
+  - The firmware's level gain is exactly (level/127)^2 (output measured
+    from 0 to 127).
+  - Each track's peak is now scaled by that, using the level actually
+    sent, which mute and solo zero.
+  - EditorShot: the meter at level 64 is x0.235 of level 127 (0.254
+    expected; a peak), and 0 at level 0.
+
 ## Next steps
 
 
@@ -1352,7 +1413,7 @@ times.
         record offsets, CC 74/71, and LFO destinations if the tweak adds
         them to the LFO's list.
 
-   h. **Filter types, after the Digitone II's** (Jack, 2026-10-23).
+   h. ~~Filter types~~: done, step 31. Was: **Filter types, after the Digitone II's** (Jack, 2026-10-23).
       - The track filter today is Modded-Cycles' SVF in the firmware (LP or
         HP).
       - The DN2's filters run on its SHARC DSP, which can't run in real

@@ -90,14 +90,48 @@ void randomise(juce::AudioProcessorValueTreeState& st, int t, RandomSection s, j
         }
 
         case RandomSection::Filter:
+        {
+            // within the type chosen (the Cycles' own, or a Digitone II one)
+            const int type = current(st, t, "ftype");
             if (variation)
-                return vary(st, t, {"fcut", "freso", "fenv", "fdec"}, d);
-            // off, a moderate low-pass, or a gentle high-pass
-            set(st, t, "fcut", d.chance(0.3f) ? 64 : d.chance(0.65f) ? 64 - d.between(4, 30) : 64 + d.between(2, 20));
-            set(st, t, "freso", juce::jlimit(0, 100, d.around(30, 35)));
+                return type == 5 ? vary(st, t, {"fcut", "freso", "fenv", "fdec"}, d)   // Legacy: LP/HP stays
+                                 : vary(st, t, {"fcut", "freso", "fextra", "fenv", "fdec"}, d);
+            switch (type)
+            {
+                case 0:   // off, a moderate low-pass, or a gentle high-pass
+                    set(st, t, "fcut", d.chance(0.3f) ? 64 : d.chance(0.65f) ? 64 - d.between(4, 30) : 64 + d.between(2, 20));
+                    set(st, t, "freso", juce::jlimit(0, 100, d.around(30, 35)));
+                    break;
+                case 1:   // Multimode: mostly LP or BP, sometimes between or HP
+                    set(st, t, "fcut", d.between(64, 112));
+                    set(st, t, "freso", juce::jlimit(0, 90, d.around(40, 35)));
+                    set(st, t, "fextra", juce::jlimit(0, 127, d.around(d.pick({0, 0, 32, 64, 64, 96, 127}), 6)));
+                    break;
+                case 2:   // Lowpass 4
+                    set(st, t, "fcut", d.between(60, 112));
+                    set(st, t, "freso", juce::jlimit(0, 100, d.around(45, 40)));
+                    break;
+                case 3:   // Equalizer: a clear boost or cut somewhere useful
+                    set(st, t, "fcut", d.between(40, 110));
+                    set(st, t, "freso", d.bipolar(16, 60));
+                    set(st, t, "fextra", d.between(40, 100));
+                    break;
+                case 4:
+                case 6:   // the combs: on a note related to C (fifths, octaves)
+                    set(st, t, "fcut", d.pick({48, 55, 60, 67, 72, 79, 84, 91, 96}));
+                    set(st, t, "freso", d.between(40, 110));
+                    set(st, t, "fextra", d.between(60, 127));
+                    break;
+                default:  // Legacy: mostly low-pass
+                    set(st, t, "fcut", d.between(60, 112));
+                    set(st, t, "freso", juce::jlimit(0, 100, d.around(40, 35)));
+                    set(st, t, "fextra", d.chance(0.75f) ? 0 : 127);
+                    break;
+            }
             set(st, t, "fenv", d.chance(0.5f) ? 64 : d.bipolar(8, 40));
             set(st, t, "fdec", d.between(30, 95));
             return;
+        }
     }
 }
 } // namespace cyclesemu

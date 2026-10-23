@@ -43,6 +43,16 @@ const juce::StringArray kLfoMultNames{"1", "2", "4", "8", "16", "32", "64", "128
 // The firmware's destination values and the names its LFO page shows.
 // 28-31: the per-track filter's parameters (Modded-Cycles' track-filter,
 // NOTES.md step 17), which it adds to the LFO's list
+const juce::StringArray kFilterTypeNames{"Cycles", "Multimode", "Lowpass 4", "Equalizer", "Comb-", "Legacy", "Comb+"};
+const FilterTypeInfo kFilterTypes[7] = {
+    {"Cutoff", "Reso", "", 64, 0, 0},
+    {"Freq", "Reso", "Morph", 127, 0, 0},
+    {"Freq", "Reso", "", 127, 0, 0},
+    {"Freq", "Gain", "Q", 64, 64, 64},
+    {"Freq", "Fdbk", "LPF", 72, 0, 127},
+    {"Freq", "Reso", "LP/HP", 127, 0, 0},
+    {"Freq", "Fdbk", "LPF", 72, 0, 127},
+};
 const int kLfoDestValues[kNumLfoDests] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 29, 30, 31};
 const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep", "Contour", "Punch",
                                       "Gate", "Fine Tune", "Decay", "Vol+Dist", "Delay Send",
@@ -76,6 +86,11 @@ const ParamDef kTrackParams[] = {
     {"lfodepth", "LFO Depth", 0x24, 0, 127, 109, Kind::Sound, Show::Bipolar},
     {"lfofade", "LFO Fade", 0x1a, 0, 127, 104, Kind::Sound, Show::Bipolar},
     {"lfophase", "LFO Start Phase", 0x20, 0, 127, 107, Kind::Sound, Show::Plain},
+    // the filter's type: the Cycles' own (Modded-Cycles), or one of the
+    // Digitone II's (NOTES.md step 31), and its third knob; before the
+    // knobs, so a preset sets the type first
+    {"ftype", "Filter Type", 0, 0, 6, -1, Kind::Filter, Show::Plain},
+    {"fextra", "Filter Morph/Q/LPF", 0, 0, 127, -1, Kind::Filter, Show::Plain},
     // the per-track filter (k 28-31): cutoff L64..OFF..H63, reso, envelope
     // amount (64 = none) and decay; CC 74 and 71 as on the Model:Samples
     {"fcut", "Filter Cutoff", 0x4c, 0, 127, 74, Kind::Sound, Show::Cutoff},
@@ -154,6 +169,7 @@ const juce::StringArray* choicesFor(const char* id)
     static const juce::StringArray priority{"Last", "Low", "High"}, slope{"Constant Rate", "Constant Time"},
         style{"Glide", "Glissando"};
     if (!std::strcmp(id, "notepri")) return &priority;
+    if (!std::strcmp(id, "ftype")) return &kFilterTypeNames;
     if (!std::strcmp(id, "pslope")) return &slope;
     if (!std::strcmp(id, "pstyle")) return &style;
     return nullptr;
@@ -366,6 +382,7 @@ void CyclesEmuProcessor::resetTrack(int t)
                         setPlain(apvts, id, (float)tr.getProperty("level"));
                 break;
             case Kind::Glide: setPlain(apvts, id, (float)glideDefault(d.id)); break;
+            case Kind::Filter: setPlain(apvts, id, 0.0f); break;
             case Kind::Fx: break;
         }
     }
@@ -418,6 +435,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                             return (float)j;
                     return 0.0f;
                 case Kind::Glide: return (float)glideDefault(d.id);
+                case Kind::Filter: return 0.0f;
                 case Kind::Level:
                 case Kind::Mute:
                 case Kind::Solo:
@@ -494,6 +512,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::Mute: return mc_engine_get_mute(engine, s.track);
         case Kind::Solo: return 0;
         case Kind::Glide: return glideDefault(s.def->id);
+        case Kind::Filter: return 0;   // the Cycles' filter, as the firmware has it
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
@@ -741,6 +760,10 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
                 mc_engine_param(engine, track, d.offset, v);
             break;
         case Kind::Glide: break;   // read at each note
+        case Kind::Filter:
+            (std::strcmp(d.id, "ftype") ? filterExtra : filterType)[track] = v;
+            mc_engine_set_filter(engine, track, filterType[track], filterExtra[track]);
+            break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::Level:
             levelNow[track] = v;
@@ -987,7 +1010,7 @@ void CyclesEmuProcessor::renderEngineBlock()
     const int renderStatus = mc_engine_render(engine, blockL, blockR);
     // the mixer's meters: each track's peak in the render's own track
     // buffers (SRAM 0x80001858 + 128 t: 32 big-endian Q31 samples, after
-    // Vol+Dist, before level and pan)
+    // Vol+Dist, before level and pan), times its level's gain
     {
         uint8_t raw[kTracks * 128];
         mc_engine_read(engine, 0x80001858u, raw, sizeof raw);
@@ -1000,7 +1023,11 @@ void CyclesEmuProcessor::renderEngineBlock()
                 const int32_t s = (int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]);
                 peak = std::max(peak, s == INT32_MIN ? INT32_MAX : std::abs(s));
             }
-            const float p = (float)peak / 2147483648.0f;
+            // post-fader: the firmware's level gain is (level / 127)^2
+            // (measured: output exactly proportional to level squared), and
+            // levelSent is 0 while muted or soloed out
+            const float lv = (float)juce::jmax(0, levelSent[t]) / 127.0f;
+            const float p = (float)peak / 2147483648.0f * lv * lv;
             float prev = trackPeaks[t].load(std::memory_order_relaxed);
             while (p > prev && !trackPeaks[t].compare_exchange_weak(prev, p, std::memory_order_relaxed))
             {

@@ -110,12 +110,26 @@ const std::map<juce::String, HelpText> kHelp = {
     {"lfophase",
      {"LFO Start Phase",
       "Where in the waveform the LFO starts when a note restarts it. 0 is the start, 64 halfway."}},
+    {"ftype",
+     {"Filter Type",
+      "Cycles: the original filter, low-pass left of centre, high-pass right, OFF in the middle. The others are the "
+      "Digitone II's: Multimode (2-pole, MORPH from low-pass through band-pass to high-pass), Lowpass 4 (4-pole), "
+      "Equalizer (a bell: GAIN boosts or cuts around FREQ, Q sets the width), Comb- and Comb+ (a resonant comb "
+      "tuned to a note; FDBK makes it ring, LPF darkens it), Legacy (2-pole LP or HP). Picking a type here starts "
+      "it open, flat or dry."}},
+    {"fextra",
+     {"Filter: Third Knob",
+      "What it does depends on the type: Multimode's MORPH (LP, BP at the middle, HP), the Equalizer's Q (wide to "
+      "narrow), the combs' LPF (dark to bright), Legacy's LP or HP. Unused on Cycles and Lowpass 4."}},
     {"fcut",
-     {"Filter Cutoff",
-      "The track's filter: left of centre a low-pass (L64 closed, 5 Hz, to L1 open), right a high-pass (H1 "
-      "barely, to H63 at 19 kHz), OFF in the centre leaves the track untouched. 12 dB per octave, after "
-      "Vol+Dist. CC 74."}},
-    {"freso", {"Filter Reso", "The filter's resonance, from none to a sharp, singing peak. CC 71."}},
+     {"Filter Cutoff / Freq",
+      "Cycles type: left of centre a low-pass (L64 closed, 5 Hz, to L1 open), right a high-pass (H1 barely, to "
+      "H63 at 19 kHz), OFF in the centre leaves the track untouched. Digitone II types: the frequency, 5 Hz to "
+      "20 kHz (64 is about 330 Hz); for the combs, a note (72 is C4). After Vol+Dist. CC 74."}},
+    {"freso",
+     {"Filter Reso / Gain / Fdbk",
+      "The resonance, from none to a sharp, singing peak. On the Equalizer, the gain (64 flat, about +-12 dB); on "
+      "the combs, the feedback. CC 71."}},
     {"fenv",
      {"Filter Env",
       "How far an envelope moves the cutoff on each note, up or down (0 is none). It starts on every note "

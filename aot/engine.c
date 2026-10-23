@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <complex.h>
 #include "runtime.h"
 #include "engine.h"
 
@@ -49,6 +50,12 @@ struct mc_engine {
         double env;                  /* the envelope, 1 at a note */
         int16_t c, r, a, d;          /* this block's smoothed words */
         int on, lp, trig;
+        /* the Digitone II's filter types (dn2_filter), when type > 0 */
+        int type, extra, ran;        /* ran: the type the state below belongs to */
+        double cf[8];                /* its coefficients where the last block ended */
+        double s[4];                 /* ladder / Chamberlin / one-pole states */
+        float comb[16384];           /* the comb's delay line */
+        int pos;
     } tf[6];
 };
 
@@ -113,6 +120,187 @@ static void tf_before(mc_engine *g)
     }
 }
 
+/* The Digitone II's filter machines, re-created from its own DSP code run
+ * offline (digitone2-plugin/scripts/filter_response.py, filter_raw*.py:
+ * a deterministic noise voice through each type and setting, the complex
+ * response fitted; NOTES.md step 31). Not bit-exact: the laws below fit
+ * the measured responses within about 0.05 dB (Multimode, Lowpass 4,
+ * Equalizer, Legacy at low resonance) to 1-3 dB (the combs with their
+ * loop filter closed). FREQ is the cutoff word (k28) over 256, 0-127,
+ * plus the envelope; RESO / GAIN / FEEDBACK the reso word (k29); the
+ * third knob (MORPH, Q, LPF, LP/HP) is `extra`, set by the plugin. */
+enum { FT_CYCLES, FT_MULTI, FT_LP4, FT_EQ, FT_COMBM, FT_LEGACY, FT_COMBP };
+
+static double dn2_hz(double v) { return 5.0 * exp(0.065606 * v); }   /* 64 = 333 Hz, 127 = 20.8 kHz */
+
+static double interp(const double *t, double x, int n, double step)
+{   /* t[0..n-1] at 0, step, 2 step ...; the last entry at 127 */
+    if (x <= 0) return t[0];
+    double i = x / step;
+    int j = (int)i;
+    if (j >= n - 2) {               /* between the last regular point and 127 */
+        double x0 = step * (n - 2), fr = (x - x0) / (127.0 - x0);
+        fr = fr > 1 ? 1 : fr;
+        return t[n - 2] + (t[n - 1] - t[n - 2]) * fr;
+    }
+    return t[j] + (t[j + 1] - t[j]) * (i - j);
+}
+
+/* Multimode's damping k over RESO (0, 8 .. 120, 127): Q 0.5 .. 19.7 */
+static const double MM_K[17] = {2.0015, 1.7245, 1.2227, 0.8234, 0.5641, 0.4023, 0.2978, 0.2275, 0.1788,
+                                0.1442, 0.1187, 0.0994, 0.0844, 0.0729, 0.0636, 0.0560, 0.0507};
+/* Legacy (a Chamberlin filter): F at RESO 0 and its damping q at RESO 0,
+ * over FREQ 0, 8 .. 120, 127; F rises toward 2 sin(pi fc / fs) with RESO */
+static const double LEG_F0[17] = {0.00085, 0.00130, 0.00207, 0.00336, 0.00550, 0.00921, 0.01526, 0.02553, 0.04273,
+                                  0.07078, 0.11721, 0.19011, 0.29857, 0.45216, 0.63942, 0.82279, 0.95};
+static const double LEG_Q0[17] = {1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98, 1.98,
+                                  1.89, 1.89, 1.81, 1.72, 1.57, 1.37, 1.19, 1.05};
+/* the combs: the loop's one-pole coefficient over LPF, the output trim over FEEDBACK */
+static const double COMB_P[9] = {0.82, 0.78, 0.66, 0.50, 0.33, 0.16, 0.08, 0.05, 0.03};
+static const double COMB_C[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 0.99, 0.945, 0.78, 0.65};
+
+static void dn2_coefs(int type, double v, double r, double x3, double *c)
+{
+    switch (type) {
+    case FT_MULTI: {                /* TPT SVF; MORPH: LP -> BP -> HP, equal power */
+        c[0] = tan(M_PI * dn2_hz(v) / 48000.0);
+        c[1] = interp(MM_K, r, 17, 8.0);
+        double u = x3 / 127.0 * 2.0, lo = u < 1 ? u : u - 1;
+        double th = M_PI / 2 * (lo - 0.04 * sin(2 * M_PI * lo));
+        if (u < 1) c[2] = cos(th), c[3] = sin(th), c[4] = 0;
+        else c[2] = 0, c[3] = cos(th), c[4] = sin(th);
+        break;
+    }
+    case FT_LP4:                    /* zero-delay ladder, resonance 3.45 (r/127)^2, gain-compensated */
+        c[0] = tan(M_PI * dn2_hz(v) / 48000.0);
+        c[1] = 3.45 * (r / 127.0) * (r / 127.0);
+        break;
+    case FT_EQ: {                   /* a bell: +-12 dB, Q 0.5 at 64 */
+        double A = pow(10.0, (r - 64.0) * 3.0 / 16.0 / 40.0);
+        double Q = 0.5 * exp(0.0287 * (x3 - 64.0));
+        c[0] = tan(M_PI * dn2_hz(v) / 48000.0);
+        c[1] = 1.0 / ((Q < 0.08 ? 0.08 : Q) * A);       /* k' */
+        c[2] = A * A - 1.0;
+        break;
+    }
+    case FT_COMBM:
+    case FT_COMBP: {                /* FREQ: semitones, 72 = C4; feedback 1 - (1 - fb)^3 */
+        double hz = 261.6256 * pow(2.0, (v - 72.0) / 12.0), d = 48000.0 / hz;
+        double fb = 1.0 - pow(1.0 - r / 127.0, 3.0), lim = type == FT_COMBP ? 0.997 : 0.951;
+        c[0] = d < 2 ? 2 : d > 16380 ? 16380 : d;
+        c[1] = (fb > lim ? lim : fb) * (type == FT_COMBP ? 1 : -1);
+        c[2] = interp(COMB_P, x3, 9, 16.0);
+        c[3] = interp(COMB_C, r, 9, 16.0);
+        break;
+    }
+    case FT_LEGACY: {               /* Chamberlin; TYPE < 64 LP, else HP (= input - LP) */
+        double f0 = interp(LEG_F0, v, 17, 8.0), hz = dn2_hz(v);
+        double f1 = v >= 112 ? (v >= 120 ? 1.398 + (v - 120) * 0.03 : 0.944 + (v - 112) * 0.0567)
+                             : 2 * sin(M_PI * (hz < 20000 ? hz : 20000) / 48000.0);
+        if (f1 < f0) f1 = f0;
+        double F = f0 + (f1 - f0) * (1 - exp(-r / 33.0));
+        c[0] = F > 1.9 ? 1.9 : F;
+        c[1] = interp(LEG_Q0, v, 17, 8.0) * exp(-0.02925 * r);
+        c[2] = x3 >= 64;
+        break;
+    }
+    }
+}
+
+static void dn2_filter(mc_engine *g, int t, struct tf_state *f)
+{
+    double v = f->c / 256.0 + (f->a - 0x4000) / 256.0 * f->env;
+    v = v < 0 ? 0 : v > 127 ? 127 : v;
+    const double r = (f->r < 0 ? 0 : f->r) / 256.0;
+    double cn[8] = {0};
+    dn2_coefs(f->type, v, r > 127 ? 127 : r, f->extra, cn);
+    if (f->ran != f->type) {       /* a new type: from rest, its coefficients as they are */
+        memset(f->s, 0, sizeof f->s);
+        memset(f->comb, 0, sizeof f->comb);
+        f->ic1 = f->ic2 = 0;
+        f->pos = 0;
+        memcpy(f->cf, cn, sizeof cn);
+        f->ran = f->type;
+        f->on = 0;
+    }
+    uint8_t *buf = g->x->mem + TRACK_BUFS + 128 * t;
+    const double norm = 1.0 / 2147483648.0;
+    double c[8], dc[8];
+    for (int i = 0; i < 8; i++)
+        c[i] = f->cf[i], dc[i] = (cn[i] - f->cf[i]) / 32;
+    if (f->type == FT_LEGACY)
+        dc[2] = 0, c[2] = cn[2];    /* LP/HP switches, it does not ramp */
+    double ic1 = f->ic1, ic2 = f->ic2, s0 = f->s[0], s1 = f->s[1], s2 = f->s[2], s3 = f->s[3];
+    for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < 8; j++)
+            c[j] += dc[j];
+        const double x = (int32_t)mc_ld32m(buf, 4 * i) * norm;
+        double y;
+        switch (f->type) {
+        case FT_MULTI:
+        case FT_EQ: {
+            const double gg = c[0], kk = c[1];
+            const double a1 = 1.0 / (1.0 + gg * (gg + kk)), a2 = gg * a1, a3 = gg * a2;
+            const double v3 = x - ic2, v1 = a1 * ic1 + a2 * v3, v2 = ic2 + a2 * ic1 + a3 * v3;
+            ic1 = 2 * v1 - ic1;
+            ic2 = 2 * v2 - ic2;
+            if (f->type == FT_MULTI)
+                y = c[2] * v2 + c[3] * v1 + c[4] * (x - kk * v1 - v2);
+            else
+                y = x + c[2] * kk * v1;
+            break;
+        }
+        case FT_LP4: {
+            const double gg = c[0], rr = c[1], G = gg / (1 + gg);
+            /* each stage v = (u - s) G, y = v + s, s' = y + v; the
+             * feedback solved: y4 = G^4 u + S */
+            const double S = G * G * G * s0 / (1 + gg) + G * G * s1 / (1 + gg) + G * s2 / (1 + gg) + s3 / (1 + gg);
+            double u = (x - rr * S) / (1 + rr * G * G * G * G);
+            double st[4] = {s0, s1, s2, s3};
+            for (int k = 0; k < 4; k++) {
+                const double vv = (u - st[k]) * G, yy = vv + st[k];
+                st[k] = yy + vv;
+                u = yy;
+            }
+            s0 = st[0], s1 = st[1], s2 = st[2], s3 = st[3];
+            y = (1 + rr) * u;
+            break;
+        }
+        case FT_COMBM:
+        case FT_COMBP: {
+            const double d = c[0], gfb = c[1], p = c[2], trim = c[3];
+            double rp = f->pos - d;
+            if (rp < 0) rp += 16384;
+            const int i0 = (int)rp, i1 = (i0 + 1) & 16383;
+            const double fr = rp - i0, del = f->comb[i0] * (1 - fr) + f->comb[i1] * fr;
+            s0 = (1 - p) * del + p * s0;                 /* the loop's low-pass */
+            f->comb[f->pos] = (float)(x + gfb * s0);
+            f->pos = (f->pos + 1) & 16383;
+            y = trim * (x + 1.05 * gfb * s0);
+            break;
+        }
+        default: {                  /* FT_LEGACY */
+            const double F = c[0], q = c[1];
+            const double lpn = s0 + F * s1;              /* lp[n] = lp[n-1] + F bp[n-1] */
+            const double hp = x - lpn - q * s1;
+            s1 = s1 + F * hp;
+            s0 = lpn;
+            y = c[2] ? x - lpn : lpn;
+            break;
+        }
+        }
+        double o = y * 2147483648.0;
+        o = o > 2147483647.0 ? 2147483647.0 : o < -2147483648.0 ? -2147483648.0 : o;
+        mc_st32m(buf, 4 * i, (uint32_t)(int32_t)o);
+    }
+    if (fabs(ic1) < 1e-20) ic1 = 0;
+    if (fabs(ic2) < 1e-20) ic2 = 0;
+    for (int k = 0; k < 4; k++)
+        if (fabs(f->s[k]) < 1e-20) f->s[k] = 0;
+    f->ic1 = ic1, f->ic2 = ic2, f->s[0] = s0, f->s[1] = s1, f->s[2] = s2, f->s[3] = s3;
+    memcpy(f->cf, cn, sizeof cn);
+}
+
 static void tf_after(mc_engine *g)
 {
     for (int t = 0; t < 6; t++) {
@@ -128,6 +316,11 @@ static void tf_after(mc_engine *g)
             if (f->env < 0x10000 / 2147483648.0)
                 f->env = 0.0;
         }
+        if (f->type != FT_CYCLES) {
+            dn2_filter(g, t, f);
+            continue;
+        }
+        f->ran = FT_CYCLES;
         const int knob = (int16_t)mc_ld16(g->x, g->kit + 0x1c + 100 * t + 0x4c) - 0x4000, now = f->c - 0x4000;
         if (knob == 0 && now == 0 && (!f->on || f->w == 0.0)) {
             f->on = 0;                   /* OFF: the track as it is */
@@ -209,8 +402,65 @@ void mc_engine_snap_param(mc_engine *g, int track, int offset)
 void mc_engine_set_smooth_filter(mc_engine *g, int on)
 {
     g->smooth_filter = on;
-    memset(g->tf, 0, sizeof g->tf);
+    for (int t = 0; t < 6; t++) {    /* from rest, keeping each track's type */
+        const int type = g->tf[t].type, extra = g->tf[t].extra;
+        memset(&g->tf[t], 0, sizeof g->tf[t]);
+        g->tf[t].type = type, g->tf[t].extra = extra;
+    }
     engine_update_hook(g);
+}
+
+double mc_filter_db(int type, double v, double r, double extra, double hz)
+{
+    double c[8] = {0};
+    if (type <= FT_CYCLES || type > FT_COMBP)
+        return 0.0;
+    dn2_coefs(type, v, r, extra, c);
+    const double w = 2 * M_PI * hz / 48000.0;
+    const double complex z1 = cexp(-I * w), sb = (1 - z1) / (1 + z1);   /* bilinear s, before / g */
+    double complex h;
+    switch (type) {
+    case FT_MULTI: {
+        const double complex s = sb / c[0], den = s * s + c[1] * s + 1;
+        h = (c[2] + c[3] * s + c[4] * s * s) / den;
+        break;
+    }
+    case FT_EQ: {
+        const double complex s = sb / c[0], den = s * s + c[1] * s + 1;
+        h = 1 + c[2] * c[1] * s / den;
+        break;
+    }
+    case FT_LP4: {
+        const double complex G = 1 / (1 + sb / c[0]), G4 = G * G * G * G;
+        h = (1 + c[1]) * G4 / (1 + c[1] * G4);
+        break;
+    }
+    case FT_COMBM:
+    case FT_COMBP: {
+        /* the delay as the DSP reads it: linear interpolation between samples */
+        const double n = floor(c[0]), fr = c[0] - n;
+        const double complex zd = (1 - fr) * cexp(-I * w * n) + fr * cexp(-I * w * (n + 1));
+        const double complex L = (1 - c[2]) / (1 - c[2] * z1);
+        const double complex e = L * zd / (1 - c[1] * L * zd);
+        h = c[3] * (1 + 1.05 * c[1] * e);
+        break;
+    }
+    default: {                      /* Legacy: the Chamberlin's LP, or 1 - LP */
+        const double F = c[0], q = c[1];
+        const double complex den = (1 - z1) * (1 - z1 + F * q * z1) + F * F * z1, lp = F * F * z1 / den;
+        h = c[2] ? 1 - lp : lp;
+        break;
+    }
+    }
+    return 20 * log10(cabs(h) + 1e-12);
+}
+
+void mc_engine_set_filter(mc_engine *g, int track, int type, int extra)
+{
+    if (track < 0 || track > 5)
+        return;
+    g->tf[track].type = type < 0 ? 0 : type > FT_COMBP ? FT_COMBP : type;
+    g->tf[track].extra = extra < 0 ? 0 : extra > 127 ? 127 : extra;
 }
 
 void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend)

@@ -134,7 +134,7 @@ target_link_libraries(CyclesEmuHostTest PRIVATE mcengine
 juce_add_console_app(CyclesEmuEditorShot PRODUCT_NAME "CyclesEmuEditorShot")
 target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp)
 target_compile_definitions(CyclesEmuEditorShot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine juce::juce_audio_utils
+target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine juce::juce_audio_utils juce::juce_dsp
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 # The resampler against JUCE's WindowedSincInterpolator: quality and time.

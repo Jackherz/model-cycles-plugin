@@ -1,3 +1,5 @@
+#include <complex>
+#include <juce_dsp/juce_dsp.h>
 #include <set>
 // Render every page of the CyclesEmu editor to PNG (layout check).
 //   CyclesEmuEditorShot OUT_DIR
@@ -378,6 +380,35 @@ int main(int argc, char** argv)
             }
             std::printf("meters after a note on track 3: %.3f %.3f %.3f %.3f %.3f %.3f -> %s\n", pk[0], pk[1], pk[2],
                         pk[3], pk[4], pk[5], ok ? "PASS" : "FAIL");
+        }
+        // post-fader: a held Tone on track 1, its meter at levels 127, 64, 0
+        {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            float at[3] = {};
+            const int levels[3] = {127, 64, 0};
+            for (int b = 0; b < 1500 + 3 * 300; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 1500)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                const int stage = b < 1500 ? -1 : (b - 1500) / 300;
+                if (stage >= 0 && (b - 1500) % 300 == 0)
+                    cyclesemu::setPlain(f.state(), "t1_level", (float)levels[stage]);
+                buf.clear();
+                f.processBlock(buf, midi);
+                const float p = f.takeTrackPeak(0);
+                if (stage >= 0 && (b - 1500) % 300 > 100)
+                    at[stage] = std::max(at[stage], p);
+            }
+            const bool ok = at[0] > 0.05f && std::abs(at[1] / at[0] - 0.254f) < 0.02f && at[2] == 0.0f;
+            std::printf("meter post-fader: level 127 %.3f, 64 %.3f (x%.3f, (64/127)^2 = 0.254), 0 %.3f -> %s\n", at[0],
+                        at[1], at[1] / at[0], at[2], ok ? "PASS" : "FAIL");
         }
         const double other = soloed(false), both = soloed(true);
         std::printf("solo: track 1 with track 2 soloed %.4f, with both soloed %.4f -> %s\n", other, both,
@@ -783,6 +814,103 @@ int main(int argc, char** argv)
             std::printf("\n");
         }
         std::printf("filter lfo smooth -> %s\n", ok ? "PASS" : "FAIL");
+    }
+
+    // the Digitone II's filter types: the engine's audio against its own
+    // law (mc_filter_db, which the filter screen draws). Metal (broadband)
+    // on track 1, rendered unfiltered and filtered; the response is their
+    // cross-spectrum over the plain one, compared where Metal has energy
+    {
+        auto render = [](int type, int cut, int res, int extra) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 2);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64);
+            cyclesemu::setPlain(f.state(), "t1_delaysend", 0);
+            cyclesemu::setPlain(f.state(), "t1_reverbsend", 0);
+            cyclesemu::setPlain(f.state(), "t1_voldist", 40);
+            cyclesemu::setPlain(f.state(), "t1_fenv", 64);
+            cyclesemu::setPlain(f.state(), "t1_ftype", (float)type);
+            cyclesemu::setPlain(f.state(), "t1_fcut", (float)cut);
+            cyclesemu::setPlain(f.state(), "t1_freso", (float)res);
+            cyclesemu::setPlain(f.state(), "t1_fextra", (float)extra);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<float> out;
+            for (int b = 0; b < 1500 + 1600; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 1500)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b >= 1520)
+                    for (int i = 0; i < 32; ++i)
+                        out.push_back(buf.getSample(0, i) + buf.getSample(1, i));
+            }
+            return out;
+        };
+        const auto dry = render(0, 64, 0, 0);
+        constexpr int order = 12, n = 1 << order;
+        juce::dsp::FFT fft(order);
+        // averaged cross- and auto-spectra, Hann windows, half overlap
+        auto spectra = [&](const std::vector<float>& y, std::vector<std::complex<double>>& sxy, std::vector<double>& sxx) {
+            sxy.assign(n / 2, {});
+            sxx.assign(n / 2, 0);
+            std::vector<std::complex<float>> a(n), b(n), A(n), B(n);
+            for (size_t at = 0; at + n <= dry.size(); at += n / 2)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const float w = 0.5f - 0.5f * std::cos(2 * juce::MathConstants<float>::pi * i / n);
+                    a[(size_t)i] = dry[at + (size_t)i] * w;
+                    b[(size_t)i] = y[at + (size_t)i] * w;
+                }
+                fft.perform(a.data(), A.data(), false);
+                fft.perform(b.data(), B.data(), false);
+                for (int k = 0; k < n / 2; ++k)
+                {
+                    sxy[(size_t)k] += std::complex<double>(B[(size_t)k]) * std::conj(std::complex<double>(A[(size_t)k]));
+                    sxx[(size_t)k] += std::norm(std::complex<double>(A[(size_t)k]));
+                }
+            }
+        };
+        struct Case { int type, cut, res, extra; const char* name; };
+        const Case cases[] = {{1, 72, 64, 0, "Multimode LP"}, {1, 72, 64, 64, "Multimode BP"}, {1, 80, 30, 127, "Multimode HP"},
+                              {2, 72, 100, 0, "Lowpass 4"}, {3, 80, 127, 90, "Equalizer +12"}, {3, 80, 0, 64, "Equalizer -12"},
+                              {5, 72, 64, 0, "Legacy LP"}, {5, 80, 64, 127, "Legacy HP"}, {6, 72, 80, 127, "Comb+"},
+                              {4, 72, 80, 127, "Comb-"}};
+        bool ok = true;
+        for (const auto& c : cases)
+        {
+            const auto wet = render(c.type, c.cut, c.res, c.extra);
+            std::vector<std::complex<double>> sxy;
+            std::vector<double> sxx;
+            spectra(wet, sxy, sxx);
+            std::vector<double> sorted(sxx.begin(), sxx.end());
+            std::nth_element(sorted.begin(), sorted.begin() + (long)sorted.size() / 2, sorted.end());
+            const double floor = sorted[sorted.size() / 2];
+            std::vector<double> errs;
+            for (int k = 1; k < n / 2; ++k)
+            {
+                const double hz = k * 48000.0 / n;
+                if (hz < 60 || hz > 12000 || sxx[(size_t)k] < floor)
+                    continue;
+                const double measured = 20 * std::log10(std::abs(sxy[(size_t)k] / sxx[(size_t)k]) + 1e-12);
+                errs.push_back(std::abs(measured - mc_filter_db(c.type, c.cut, c.res, c.extra, hz)));
+            }
+            std::sort(errs.begin(), errs.end());
+            const double median = errs[errs.size() / 2], p90 = errs[errs.size() * 9 / 10];
+            // the combs' deep notches are where a measurement over a decaying
+            // sound is least sure: a looser 90th percentile for them
+            const bool comb = c.type == 4 || c.type == 6;
+            const bool good = median < 0.5 && p90 < (comb ? 3.0 : 2.0);
+            ok &= good;
+            std::printf("filter %-14s engine against its law: median %.2f dB, 90%% within %.2f dB%s\n", c.name, median, p90,
+                        good ? "" : "  <-");
+        }
+        std::printf("filter types: the engine follows the drawn response -> %s\n", ok ? "PASS" : "FAIL");
     }
 
     // the help mode, as if hovering over a few controls

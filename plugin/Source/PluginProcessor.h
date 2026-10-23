@@ -24,6 +24,7 @@ enum class Kind
     LfoDest,    // index into kLfoDestValues
     Solo,       // the mixer's solo (the plugin's, not the firmware's)
     Glide,      // legato and portamento: the plugin's, read at each note
+    Filter,     // the filter's type and third knob (mc_engine_set_filter)
 };
 
 // How the editor and the host show its value.
@@ -45,7 +46,17 @@ extern const int kNumTrackParams;
 extern const ParamDef kFxParams[];
 extern const int kNumFxParams;
 
-extern const juce::StringArray kMachineNames, kLfoWaveNames, kLfoTrigNames, kLfoMultNames, kLfoDestNames;
+extern const juce::StringArray kMachineNames, kLfoWaveNames, kLfoTrigNames, kLfoMultNames, kLfoDestNames,
+    kFilterTypeNames;
+// What a filter type's knobs are (cutoff, reso, third knob; empty: unused),
+// and the settings a type starts from when picked (cutoff, reso, third):
+// the Digitone II's defaults, so a new type starts open, flat or dry.
+struct FilterTypeInfo
+{
+    const char *cut, *res, *extra;
+    int defCut, defRes, defExtra;
+};
+extern const FilterTypeInfo kFilterTypes[7];
 constexpr int kNumLfoDests = 18;
 extern const int kLfoDestValues[kNumLfoDests];
 
@@ -129,7 +140,7 @@ public:
     }
     // the output's peak over the last callback (0..), for the editor's meter
     float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
-    // a track's peak since the last call (0..1), before its level: for the mixer's meters
+    // a track's peak since the last call (0..1), after its level (post-fader): for the mixer's meters
     float takeTrackPeak(int t) { return trackPeaks[t].exchange(0.0f, std::memory_order_relaxed); }
     bool trackAudible(int t) const { return levelSent[t] != 0; }
 
@@ -211,6 +222,7 @@ private:
     int levelNow[cyclesemu::kTracks] = {100, 100, 100, 100, 100, 100};
     bool mutedNow[cyclesemu::kTracks] = {}, soloNow[cyclesemu::kTracks] = {};
     int levelSent[cyclesemu::kTracks] = {-1, -1, -1, -1, -1, -1};
+    int filterType[cyclesemu::kTracks] = {}, filterExtra[cyclesemu::kTracks] = {};
     void applyMix();
     // per-track peaks since the editor last looked, from the render's track
     // buffers (before level and pan)
