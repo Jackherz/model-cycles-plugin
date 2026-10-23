@@ -1545,6 +1545,17 @@ good open-source ones such as the Schwung catalogue's), with a switch.
 - **EditorShot "fx engines"**: each type's wet signal (send up, less send
   off) is within 0.1 dB of the Cycles' level after trims, all finite.
   Rendering costs 4.3 % of real time (Cycles) to 5.5 % (CloudSeed).
+- **Checks**:
+  - Replay bit-exact with the re-hooked render: 300/300 (`cap-filter`),
+    200/200 (`cap-driven`).
+  - PGO redone: the bench is 67.3 us a block with the profile against
+    81.7 without.
+- **Open (CPU)**: HostTest's default pattern now measures 8.6 % (10.4 %
+  without PGO), against 6.7-7.0 % before the profile was redone. The hooks
+  are off on that path and the bench gains 18 % from the profile, so the
+  likely cause is the new profile's code layout for the giant `mc_run`
+  favouring the bench's machine mix over HostTest's kit. To try: train PGO
+  on HostTest's pattern too, or several layouts.
 
 ## Next steps
 
