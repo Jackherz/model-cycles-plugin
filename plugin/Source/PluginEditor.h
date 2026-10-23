@@ -192,10 +192,30 @@ private:
     int shown[6] = {-1, -1, -1, -1, -1, -1};
 };
 
+// The Syntakt's SOUND SETUP modulation for one track: Velocity Mod and Key
+// Tracking (four destinations and depths each), Velocity To Vol, Filter
+// Keytrack. Shown over the track page.
+class ModPanel : public juce::Component
+{
+public:
+    ModPanel(juce::AudioProcessorValueTreeState&, int track);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    std::function<void()> onClose;
+    // the destination lists' entries, as the machine names its knobs
+    void setDestText(int entry, const juce::String&);
+
+private:
+    std::vector<std::unique_ptr<ParamControl>> controls;   // vel 4 x (dest, depth), key 4 x, velvol, fkey
+    juce::TextButton close{"Close"};
+    juce::Rectangle<int> velArea, keyArea, otherArea;
+};
+
 class TrackPage : public juce::Component
 {
 public:
     TrackPage(CyclesEmuProcessor&, int track);
+    void showSetup(bool);   // the SOUND SETUP panel over the page
     std::function<void(const juce::String&)> beforeChange;   // the editor's undo snapshot
     void resized() override;
 
@@ -208,6 +228,8 @@ private:
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
     ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
+    ModPanel modPanel;
+    juce::TextButton setupButton{"Setup"};
     // the filter's knobs, relabelled (and their values shown) for its type
     ParamControl *filterCut = nullptr, *filterRes = nullptr, *filterExtra = nullptr;
     std::unique_ptr<juce::ParameterAttachment> filterTypeAtt;
@@ -292,6 +314,7 @@ public:
     juce::Rectangle<int> panelArea() const;
     juce::Rectangle<int> statusArea() const;
     int currentPage() const { return current; }
+    void showSoundSetup(bool);   // the current track page's SOUND SETUP panel
     void updateTrigLights();    // run by the timer; public for the tests
     bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }
     void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control

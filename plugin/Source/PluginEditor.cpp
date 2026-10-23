@@ -632,7 +632,74 @@ void FilterScope::paint(juce::Graphics& g)
     scanlines(g, in);
 }
 
-TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterScope(proc, t)
+ModPanel::ModPanel(juce::AudioProcessorValueTreeState& st, int t)
+{
+    using S = ParamControl::Style;
+    auto add = [&](const juce::String& id, const juce::String& label, S style) {
+        controls.push_back(std::make_unique<ParamControl>(st, paramId(t, id.toRawUTF8()), label, style));
+        addAndMakeVisible(*controls.back());
+    };
+    for (const char* kind : {"vm", "km"})
+        for (int i = 1; i <= 4; ++i)
+        {
+            add(juce::String(kind) + juce::String(i) + "dst", "Dest " + juce::String(i), S::Choice);
+            add(juce::String(kind) + juce::String(i) + "dep", "Depth", S::Knob);
+        }
+    add("velvol", "Vel > Vol", S::Choice);
+    add("fkey", "Filt Key", S::Knob);
+    close.onClick = [this] {
+        if (onClose)
+            onClose();
+    };
+    addAndMakeVisible(close);
+}
+
+void ModPanel::setDestText(int entry, const juce::String& text)
+{
+    for (int i = 0; i < 16; i += 2)
+        controls[(size_t)i]->setItemText(entry, text);
+}
+
+void ModPanel::paint(juce::Graphics& g)
+{
+    g.fillAll(kFace);
+    groupBox(g, velArea, "Velocity Mod", accentFor(*this));
+    groupBox(g, keyArea, "Key Tracking", accentFor(*this));
+    groupBox(g, otherArea, "Sound Setup", accentFor(*this));
+}
+
+void ModPanel::resized()
+{
+    auto r = getLocalBounds();
+    otherArea = r.removeFromRight(200).withTrimmedLeft(6);
+    velArea = r.removeFromTop(r.getHeight() / 2).withTrimmedBottom(3);
+    keyArea = r.withTrimmedTop(3);
+    // each block: four columns of a destination over its depth
+    for (int block = 0; block < 2; ++block)
+    {
+        auto a = (block ? keyArea : velArea).reduced(12, 8).withTrimmedTop(16);
+        const int w = a.getWidth() / 4;
+        for (int i = 0; i < 4; ++i)
+        {
+            auto col = a.removeFromLeft(w).reduced(6, 0);
+            controls[(size_t)(block * 8 + 2 * i)]->setBounds(col.removeFromTop(52));
+            controls[(size_t)(block * 8 + 2 * i + 1)]->setBounds(col.withSizeKeepingCentre(col.getWidth(), juce::jmin(col.getHeight(), 112)));
+        }
+    }
+    auto o = otherArea.reduced(12, 8).withTrimmedTop(16);
+    controls[16]->setBounds(o.removeFromTop(52));
+    controls[17]->setBounds(o.removeFromTop(juce::jmin(112, o.getHeight() - 40)));
+    close.setBounds(o.removeFromBottom(28).withSizeKeepingCentre(100, 26));
+}
+
+void TrackPage::showSetup(bool on)
+{
+    modPanel.setVisible(on);
+    if (on)
+        modPanel.toFront(false);
+}
+
+TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterScope(proc, t), modPanel(proc.state(), t)
 {
     using S = ParamControl::Style;
     auto& st = proc.state();
@@ -678,6 +745,8 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                 macroKnobs[i]->setLabel(labels[row][i]);
                 if (destControl != nullptr)
                     destControl->setItemText(2 + i, dests[row][i]);
+                if (i < 4)   // the modulation's lists: Color..Contour are entries 2-5 (short names)
+                    modPanel.setDestText(2 + i, labels[row][i]);
             }
             scope.repaint();   // its destination tag
         },
@@ -760,6 +829,12 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     glide.addRow({make(st, t, "port", "Port", S::Switch), make(st, t, "legato", "Legato", S::Switch)});
     glide.addRow({make(st, t, "ptim", "Time", S::Knob), make(st, t, "pamount", "Amount", S::Knob)});
     glide.minColumns = 2;
+    // the SOUND SETUP panel (velocity and key modulation), over the page
+    addChildComponent(modPanel);
+    modPanel.onClose = [this] { showSetup(false); };
+    setupButton.onClick = [this] { showSetup(!modPanel.isVisible()); };
+    setupButton.getProperties().set("helpId", paramId(t, "vm1dst"));
+    addAndMakeVisible(setupButton);
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
         section->enableDice([this, &st, t, which = which](bool variation) {
@@ -781,6 +856,10 @@ void TrackPage::resized()
     filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedRight(6).withTrimmedTop(8));
     sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
     lfo.setBounds(r.withTrimmedLeft(6));
+    // SETUP in the SOUND header, left of its dice
+    setupButton.setBounds(sound.getRight() - 36 - 76, sound.getY() - 1, 70, 20);
+    setupButton.toFront(false);
+    modPanel.setBounds(getLocalBounds());
 }
 
 FxPage::FxPage(juce::AudioProcessorValueTreeState& st)
@@ -1035,6 +1114,9 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
         proc.resetTrack(current);
         status.setText("Track " + juce::String(current + 1) + " reset", juce::dontSendNotification);
     });
+    if (track)   // velocity and key modulation, the panel over the page
+        if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
+            m.addItem("Sound Setup (Velocity, Key Tracking)...", [tp] { tp->showSetup(true); });
     // the Syntakt's portamento setup, and legato's note priority
     if (track)
     {
@@ -1241,6 +1323,12 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
 }
 
 CyclesEmuEditor::~CyclesEmuEditor() { setLookAndFeel(nullptr); }
+
+void CyclesEmuEditor::showSoundSetup(bool on)
+{
+    if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
+        tp->showSetup(on);
+}
 
 void CyclesEmuEditor::showPage(int index)
 {

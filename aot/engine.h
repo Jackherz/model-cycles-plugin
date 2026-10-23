@@ -52,6 +52,9 @@ void mc_engine_set_filter(mc_engine *g, int track, int type, int extra);
 /* A Digitone II type's magnitude (dB) at hz, for drawing: FREQ v and RESO
  * r as 0-127 (fractions allowed), its third knob extra. 0 for type 0. */
 double mc_filter_db(int type, double v, double r, double extra, double hz);
+/* Filter keytracking: the cutoff moved by this many semitones (the plugin
+ * sets it at each note: (note - 60) x amount), any type. */
+void mc_engine_set_filter_key(mc_engine *g, int track, double semitones);
 /* Make a sound word's smoothed copy (what the voices read) equal the word
  * now, skipping the firmware's slide toward it: the glide uses it at a
  * trigger, so a note starts at the pitch it should. */

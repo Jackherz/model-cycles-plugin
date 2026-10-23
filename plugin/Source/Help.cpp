@@ -153,6 +153,13 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Portamento Amount",
       "How much of the distance the glide covers: 100 glides all the way from the last note, 50 starts "
       "halfway there."}},
+    {"vm1dst",
+     {"Sound Setup: Velocity Mod and Key Tracking",
+      "As the Syntakt's SOUND SETUP. VELOCITY MOD: up to four knobs that move with how hard a note is played, each by "
+      "its depth (at full velocity the knob moves by the depth; negative depths move it the other way). KEY "
+      "TRACKING: the same with the note played, centred on middle C: depth 8 moves the knob a step per note, 127 "
+      "sixteen. VEL > VOL: how velocity sets the volume (Lin as played, Log brings soft notes up, Exp favours hard "
+      "ones, Off ignores it). FILT KEY: the filter follows the keyboard (127: fully)."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

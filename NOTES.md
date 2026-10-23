@@ -1414,6 +1414,48 @@ Jack: "CyclesFX crashes Ableton when I load it".
   7)`, contrast 7.5 in Midnight and 19.5-21 elsewhere (EditorShot). The
   colour-scheme screenshots tick Punch and Gate.
 
+## Step 35: velocity and key modulation, filter keytrack (2026-10-23)
+
+Jack: velocity and keytrack modifiers that work as on the Syntakt, so a pad
+hit harder (or a higher key) changes the sound; filter keytracking with its
+own amount, as on the DN2. Spec from the Syntakt OS 1.40 manual, SOUND >
+SETUP (pp. 30-32).
+- **Velocity Mod** and **Key Tracking**: four slots each, a destination and
+  a depth (-127..127). The depth is an offset on the knob.
+  - Velocity: depth x velocity / 127.
+  - Key: depth / 8 per semitone from middle C (MIDI 60), so 8 is a step a
+    note and 127 sixteen, as the manual says. Slots on the same destination
+    add up.
+  - Destinations (`kModDestNames`): the SYN, FLTR, AMP and LFO knobs: decay,
+    the four machine knobs (named for the machine), Vol+Dist, pan, sends,
+    the filter's four, and LFO speed, depth, fade and phase. Not pitch,
+    which is the keyboard's own.
+  - Applied at each trigger (and at legato steps: key tracking follows the
+    key). `applyNoteMods` writes knob + offset and snaps the firmware's
+    smoother (step 30), so the note starts with it.
+  - The knob keeps the offset when moved (`knobValue`, `modOffset`).
+- **Velocity To Vol** (Off / Log / Lin / Exp, default Lin): the engine
+  already scales the volume about linearly with velocity (measured: Tone at
+  velocity 64 is 0.55 of 127). The plugin reshapes the velocity it sends:
+  Off at 127, Log square root, Exp square, Lin as played (unchanged).
+- **Filter Keytrack** (0-127): the cutoff moves (note - 60) x amount / 127
+  semitones, in the engine (`mc_engine_set_filter_key`):
+  - DN2 types: FREQ steps of 1.1358 semitones.
+  - Cycles: 112.81 index units a semitone.
+  - Exact and smooth, per type.
+- **UI**: SOUND SETUP, a panel over the track page with VELOCITY MOD, KEY
+  TRACKING, VEL > VOL and FILT KEY. Open it from SETUP in the SOUND header
+  or Track > Sound Setup. Presets and resets include it (the parameters are
+  `Kind::Mod`).
+- **EditorShot**:
+  - Color 20 + 40 gives 60 at velocity 127, 40 at 64, and 50 with the knob
+    at 30.
+  - Shape 64 with key depth 16 gives 64 / 88 / 40 at C5 / C7 / C3.
+  - Velocity 32 / 127 at Lin is 0.278, Off 1.000, Exp 0.071.
+  - Through a low LP, C7 / C5 is 0.074 without keytrack and 1.000 at 127.
+- **Left for later**: the Syntakt's other sources on the same pattern:
+  Pitch Bend, Mod Wheel, Breath and Aftertouch.
+
 ## Next steps
 
 
@@ -1495,7 +1537,8 @@ Jack: "CyclesFX crashes Ableton when I load it".
       https://github.com/CHOMPI-Club/CHOMPI). After everything else is
       finished and debugged: study how it works and how it could fit the
       plugin.
-   m. **Velocity (and aftertouch) modulation, as on the Syntakt** (Jack,
+   m. ~~Velocity / keytrack modulation, filter keytracking~~: done, step 35
+      (aftertouch, mod wheel, breath and pitch bend left). Was: **Velocity (and aftertouch) modulation, as on the Syntakt** (Jack,
       2026-10-24). A pad hit harder changes the sound, the way the
       hardware's velocity modifier does: per-track destinations, each with
       a bipolar depth, applied on every note from MIDI velocity. Check the

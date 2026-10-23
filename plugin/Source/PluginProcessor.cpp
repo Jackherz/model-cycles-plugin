@@ -53,6 +53,12 @@ const FilterTypeInfo kFilterTypes[7] = {
     {"Freq", "Fdbk", "LPF", 72, 0, 127},
     {"Freq", "Fdbk", "LPF", 72, 0, 127},
 };
+// (short: they fit the setup panel's boxes)
+const juce::StringArray kModDestNames{"Off", "Decay", "Color", "Shape", "Sweep", "Contour", "Vol+Dist", "Pan",
+                                      "Delay Snd", "Reverb Snd", "Filt Cut", "Filt Reso", "Filt Env",
+                                      "Filt Dec", "LFO Speed", "LFO Depth", "LFO Fade", "LFO Phase"};
+const int kModDestOffsets[kNumModDests] = {0,    0x38, 0x2a, 0x2c, 0x2e, 0x30, 0x3a, 0x40, 0x3c,
+                                           0x3e, 0x4c, 0x4e, 0x50, 0x52, 0x16, 0x24, 0x1a, 0x20};
 const int kLfoDestValues[kNumLfoDests] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 29, 30, 31};
 const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep", "Contour", "Punch",
                                       "Gate", "Fine Tune", "Decay", "Vol+Dist", "Delay Send",
@@ -109,6 +115,27 @@ const ParamDef kTrackParams[] = {
     {"pstyle", "Portamento Style", 0, 0, 1, -1, Kind::Glide, Show::Plain},
     {"plegonly", "Portamento Legato Only", 0, 0, 1, -1, Kind::Glide, Show::Plain},
     {"pgating", "Portamento Gating", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    // the Syntakt's SOUND SETUP modulation (NOTES.md step 35): Velocity Mod
+    // and Key Tracking, four destinations each with a depth; Velocity To
+    // Vol; Filter Keytrack. The order here is modIds' below.
+    {"vm1dst", "Vel Mod 1 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"vm1dep", "Vel Mod 1 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"vm2dst", "Vel Mod 2 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"vm2dep", "Vel Mod 2 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"vm3dst", "Vel Mod 3 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"vm3dep", "Vel Mod 3 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"vm4dst", "Vel Mod 4 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"vm4dep", "Vel Mod 4 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"km1dst", "Key Track 1 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"km1dep", "Key Track 1 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"km2dst", "Key Track 2 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"km2dep", "Key Track 2 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"km3dst", "Key Track 3 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"km3dep", "Key Track 3 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"km4dst", "Key Track 4 Dest", 0, 0, kNumModDests - 1, -1, Kind::Mod, Show::Plain},
+    {"km4dep", "Key Track 4 Depth", 0, -127, 127, -1, Kind::Mod, Show::Plain},
+    {"velvol", "Velocity To Vol", 0, 0, 3, -1, Kind::Mod, Show::Plain},
+    {"fkey", "Filter Keytrack", 0, 0, 127, -1, Kind::Mod, Show::Plain},
 };
 const int kNumTrackParams = (int)(sizeof kTrackParams / sizeof kTrackParams[0]);
 
@@ -170,10 +197,22 @@ const juce::StringArray* choicesFor(const char* id)
         style{"Glide", "Glissando"};
     if (!std::strcmp(id, "notepri")) return &priority;
     if (!std::strcmp(id, "ftype")) return &kFilterTypeNames;
+    static const juce::StringArray velCurves{"Off", "Log", "Lin", "Exp"};
+    if (!std::strcmp(id, "velvol")) return &velCurves;
+    if (std::strlen(id) == 6 && (id[0] == 'v' || id[0] == 'k') && id[1] == 'm' && !std::strcmp(id + 3, "dst"))
+        return &kModDestNames;
     if (!std::strcmp(id, "pslope")) return &slope;
     if (!std::strcmp(id, "pstyle")) return &style;
     return nullptr;
 }
+
+const char* const modIds[] = {"vm1dst", "vm1dep", "vm2dst", "vm2dep", "vm3dst", "vm3dep", "vm4dst", "vm4dep",
+                               "km1dst", "km1dep", "km2dst", "km2dep", "km3dst", "km3dep", "km4dst", "km4dep",
+                               "velvol", "fkey"};
+
+// a modulation setting's starting value: none, and velocity to volume as
+// the engine plays it (Lin)
+int modDefault(const char* id) { return !std::strcmp(id, "velvol") ? 2 : 0; }
 
 const char* const glideIds[] = {"port", "ptim", "pamount", "legato", "notepri", "pslope", "pstyle", "plegonly", "pgating"};
 
@@ -316,8 +355,15 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
     }
     for (int t = 0; t < trackPages(); ++t)
+    {
         for (int i = 0; i < kGlideParams; ++i)
             glideRaw[t][i] = apvts.getRawParameterValue(paramId(t, glideIds[i]));
+        for (int i = 0; i < kModParams; ++i)
+            modRaw[t][i] = apvts.getRawParameterValue(paramId(t, modIds[i]));
+    }
+    for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the knobs the modulation adds to
+        for (int k = 0; k < 33; ++k)
+            knobValue[t][k] = mc_engine_get_param(engine, t, 0x14 + 2 * k);
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the pitch the glides add to
     {
         glides[t].userPitch = mc_engine_get_param(engine, t, 0x28);
@@ -384,6 +430,7 @@ void CyclesEmuProcessor::resetTrack(int t)
                 break;
             case Kind::Glide: setPlain(apvts, id, (float)glideDefault(d.id)); break;
             case Kind::Filter: setPlain(apvts, id, 0.0f); break;
+            case Kind::Mod: setPlain(apvts, id, (float)modDefault(d.id)); break;
             case Kind::Fx: break;
         }
     }
@@ -437,6 +484,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                     return 0.0f;
                 case Kind::Glide: return (float)glideDefault(d.id);
                 case Kind::Filter: return 0.0f;
+                case Kind::Mod: return (float)modDefault(d.id);
                 case Kind::Level:
                 case Kind::Mute:
                 case Kind::Solo:
@@ -514,6 +562,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::Solo: return 0;
         case Kind::Glide: return glideDefault(s.def->id);
         case Kind::Filter: return 0;   // the Cycles' filter, as the firmware has it
+        case Kind::Mod: return modDefault(s.def->id);
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
@@ -640,7 +689,8 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
     // smoothing sliding there from the last note's pitch
     writePitch(track);
     mc_engine_snap_param(engine, track, 0x28);
-    mc_engine_note(engine, track, note, velocity, 1, 0x0681);
+    applyNoteMods(track, note, velocity);
+    mc_engine_note(engine, track, note, velocityToVol(isVoice() ? 0 : track, velocity), 1, 0x0681);
 }
 
 // Legato: to another key without a new trigger, the pitch word carrying the
@@ -659,6 +709,57 @@ void CyclesEmuProcessor::legatoTo(int track, int note, const GlideSettings& s)
     writePitch(track);
     if (!s.port)   // a legato step without portamento: at once, as on the hardware
         mc_engine_snap_param(engine, track, 0x28);
+    applyNoteMods(track, note, g.velocity);   // key tracking follows the key
+}
+
+// The Syntakt's Velocity Mod and Key Tracking: each slot's depth (-127..127)
+// moves its destination by depth x velocity / 127, or by depth / 8 a
+// semitone from middle C (60; depth 8 = a step a note, 127 = 16), summed
+// per destination, on top of the knob; the smoothing is skipped so the note
+// starts with it. Filter Keytrack moves the cutoff (note - 60) x amount / 127
+// semitones (127: the filter follows the keyboard).
+void CyclesEmuProcessor::applyNoteMods(int track, int note, int velocity)
+{
+    const int page = isVoice() ? 0 : track;
+    auto raw = [&](int i) {
+        auto* p = modRaw[page][i];
+        return p != nullptr ? juce::roundToInt(p->load(std::memory_order_relaxed)) : modDefault(modIds[i]);
+    };
+    int off[33] = {};
+    for (int slot = 0; slot < 8; ++slot)
+    {
+        const int dst = juce::jlimit(0, kNumModDests - 1, raw(2 * slot)), depth = raw(2 * slot + 1);
+        if (dst == 0 || depth == 0)
+            continue;
+        const double amount = slot < 4 ? depth * velocity / 127.0 : depth / 8.0 * (note - 60);
+        off[(kModDestOffsets[dst] - 0x14) / 2] += juce::roundToInt(amount);
+    }
+    for (int k = 0; k < 33; ++k)
+        if (off[k] != modOffset[track][k])
+        {
+            modOffset[track][k] = off[k];
+            const int offset = 0x14 + 2 * k;
+            mc_engine_param(engine, track, offset, juce::jlimit(0, 127, knobValue[track][k] + off[k]));
+            mc_engine_snap_param(engine, track, offset);
+        }
+    mc_engine_set_filter_key(engine, track, (note - 60) * raw(17) / 127.0);
+}
+
+// Velocity To Vol: the engine scales the volume by velocity (about
+// linearly, measured); Lin passes it as played, Off at full, Log favours
+// soft notes (square root), Exp hard ones (square)
+int CyclesEmuProcessor::velocityToVol(int page, int velocity) const
+{
+    auto* p = modRaw[page][16];
+    const int curve = p != nullptr ? juce::roundToInt(p->load(std::memory_order_relaxed)) : 2;
+    const double v = juce::jlimit(1, 127, velocity) / 127.0;
+    switch (curve)
+    {
+        case 0: return 127;
+        case 1: return juce::jlimit(1, 127, juce::roundToInt(127.0 * std::sqrt(v)));
+        case 3: return juce::jlimit(1, 127, juce::roundToInt(127.0 * v * v));
+        default: return velocity;
+    }
 }
 
 // A track's notes: in Legato, a key pressed while another is held moves the
@@ -761,10 +862,17 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
                 glides[track].userPitch = v;
                 writePitch(track, true);
             }
+            else if (d.offset >= 0x14)   // with the last note's velocity / key offset
+            {
+                const int k = (d.offset - 0x14) / 2;
+                knobValue[track][k] = v;
+                mc_engine_param(engine, track, d.offset, juce::jlimit(d.lo, d.hi, v + modOffset[track][k]));
+            }
             else
                 mc_engine_param(engine, track, d.offset, v);
             break;
-        case Kind::Glide: break;   // read at each note
+        case Kind::Glide:
+        case Kind::Mod: break;   // read at each note
         case Kind::Filter:
             (std::strcmp(d.id, "ftype") ? filterExtra : filterType)[track] = v;
             mc_engine_set_filter(engine, track, filterEngineType(filterType[track]), filterExtra[track]);

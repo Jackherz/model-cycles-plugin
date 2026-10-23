@@ -25,6 +25,7 @@ enum class Kind
     Solo,       // the mixer's solo (the plugin's, not the firmware's)
     Glide,      // legato and portamento: the plugin's, read at each note
     Filter,     // the filter's type and third knob (mc_engine_set_filter)
+    Mod,        // velocity and key modulation, as the Syntakt's SOUND SETUP: read at each note
 };
 
 // How the editor and the host show its value.
@@ -57,6 +58,11 @@ struct FilterTypeInfo
     int defCut, defRes, defExtra;
 };
 extern const FilterTypeInfo kFilterTypes[7];
+// Velocity Mod / Key Tracking destinations: the sound words a note can move
+// (the SYN, FLTR, AMP and LFO pages' knobs; pitch is the keyboard's own)
+constexpr int kNumModDests = 18;
+extern const juce::StringArray kModDestNames;
+extern const int kModDestOffsets[kNumModDests];   // record offsets; 0 for Off
 // The menu's order (the combs together) to the engine's type numbers
 // (mc_engine_set_filter: the DN2's own order).
 inline int filterEngineType(int menu)
@@ -222,6 +228,15 @@ private:
     void legatoTo(int track, int note, const GlideSettings&);
     void beginGlide(Glide&, double from, const GlideSettings&);
     void writePitch(int track, bool force = false);
+    // Velocity Mod and Key Tracking (4 slots each: destination, depth),
+    // Velocity To Vol and Filter Keytrack, per track page; applied at each
+    // note as offsets on the knobs (modOffset), which the knobs then keep
+    static constexpr int kModParams = 18;
+    std::atomic<float>* modRaw[cyclesemu::kTracks][kModParams] = {};
+    int modOffset[cyclesemu::kTracks][33] = {};   // per sound word k, in knob steps
+    int knobValue[cyclesemu::kTracks][33] = {};   // the knob (host parameter) per word, as last applied
+    void applyNoteMods(int track, int note, int velocity);
+    int velocityToVol(int page, int velocity) const;
     void updateGlides();
     void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
     // Mute and Solo as on a mixer: the firmware's mute only stops sequencer

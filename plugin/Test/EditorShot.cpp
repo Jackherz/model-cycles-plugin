@@ -1010,6 +1010,97 @@ int main(int argc, char** argv)
                     biggestStep, worst < 0.03 && biggestStep < 0.03 ? "PASS" : "FAIL");
     }
 
+    // the Syntakt's SOUND SETUP modulation: Velocity Mod and Key Tracking
+    // move their destinations' engine words at each note; the knob keeps
+    // the offset; Velocity To Vol; Filter Keytrack
+    {
+        // a note's sustained level (RMS after the attack)
+        auto playNote = [](CyclesEmuProcessor& f, int note, int vel) {
+            juce::AudioBuffer<float> buf(2, 32);
+            double e = 0;
+            for (int b = 0; b < 300; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, note, (juce::uint8)vel), 0);
+                if (b == 299)
+                    midi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b >= 100 && b < 299)
+                    for (int i = 0; i < 32; ++i)
+                        e += (double)buf.getSample(0, i) * buf.getSample(0, i);
+            }
+            return (float)std::sqrt(e / (199 * 32));
+        };
+        auto fresh = [](std::initializer_list<std::pair<const char*, float>> settings) {
+            auto f = std::make_unique<CyclesEmuProcessor>(Product::Full);
+            cyclesemu::setPlain(f->state(), "midimode", 1);
+            cyclesemu::setPlain(f->state(), "t1_machine", 4);
+            cyclesemu::setPlain(f->state(), "t1_decay", 127);
+            cyclesemu::setPlain(f->state(), "t1_lfodepth", 64);
+            for (auto [id, v] : settings)
+                cyclesemu::setPlain(f->state(), id, v);
+            f->prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            juce::MidiBuffer none;
+            for (int b = 0; b < 1500; ++b)
+            {
+                buf.clear();
+                f->processBlock(buf, none);
+            }
+            return f;
+        };
+        // velocity: Color (knob 20) + 40 x vel/127; key: Shape (knob 64) + 16/8 = 2 a semitone from C
+        auto f = fresh({{"t1_color", 20}, {"t1_shape", 64}, {"t1_vm1dst", 2}, {"t1_vm1dep", 40}, {"t1_km1dst", 3},
+                        {"t1_km1dep", 16}});
+        playNote(*f, 60, 127);
+        const int c127 = f->engineValue(0, 0x2a), s60 = f->engineValue(0, 0x2c);
+        playNote(*f, 72, 64);
+        const int c64 = f->engineValue(0, 0x2a), s72 = f->engineValue(0, 0x2c);
+        cyclesemu::setPlain(f->state(), "t1_color", 30);   // the knob moves: the offset stays
+        playNote(*f, 48, 64);   // and a note after: Shape 64 - 24
+        const int cKnob = f->engineValue(0, 0x2a), s48 = f->engineValue(0, 0x2c);
+        const bool modOk = c127 == 60 && s60 == 64 && c64 == 40 && s72 == 88 && cKnob == 50 && s48 == 40;
+        std::printf("velocity mod / key tracking: Color 20+40 at vel 127 -> %d, vel 64 -> %d, knob 30 -> %d; Shape 64 "
+                    "+2/semitone: C5 %d, +12 %d, -12 %d -> %s\n", c127, c64, cKnob, s60, s72, s48, modOk ? "PASS" : "FAIL");
+        // Velocity To Vol: Off plays soft notes at full level; Exp quieter than Lin
+        auto lin = fresh({}), off = fresh({{"t1_velvol", 0}}), ex = fresh({{"t1_velvol", 3}});
+        const float l32 = playNote(*lin, 60, 32), l127 = playNote(*lin, 60, 127);
+        const float o32 = playNote(*off, 60, 32), e32 = playNote(*ex, 60, 32);
+        const bool volOk = std::abs(o32 / l127 - 1.0f) < 0.05f && e32 < l32 * 0.5f && l32 < l127 * 0.5f;
+        std::printf("velocity to vol: vel 32 / vel 127 (Lin) %.3f, Off %.3f, Exp %.3f -> %s\n", l32 / l127, o32 / l127,
+                    e32 / l127, volOk ? "PASS" : "FAIL");
+        // Filter Keytrack: Multimode LP low (FREQ 48, about 117 Hz); C7 against C5
+        auto ratio = [&](float key) {
+            auto g = fresh({{"t1_ftype", 1}, {"t1_fcut", 48}, {"t1_freso", 0}, {"t1_fextra", 0}, {"t1_fkey", key}});
+            const float lo = playNote(*g, 60, 100), hi = playNote(*g, 84, 100);
+            return hi / lo;
+        };
+        const float none = ratio(0), full = ratio(127);
+        std::printf("filter keytrack: C7 over C5 through a low LP: keytrack 0 %.3f, 127 %.3f -> %s\n", none, full,
+                    full > none * 4 ? "PASS" : "FAIL");
+    }
+
+    // the SOUND SETUP panel, with a slot of each set
+    {
+        e->showPage(0);
+        cyclesemu::setPlain(proc.state(), "t1_vm1dst", 10);
+        cyclesemu::setPlain(proc.state(), "t1_vm1dep", 40);
+        cyclesemu::setPlain(proc.state(), "t1_km1dst", 2);
+        cyclesemu::setPlain(proc.state(), "t1_km1dep", -16);
+        cyclesemu::setPlain(proc.state(), "t1_fkey", 64);
+        e->showSoundSetup(true);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-sound-setup.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        e->showSoundSetup(false);
+        for (auto* id : {"t1_vm1dst", "t1_vm1dep", "t1_km1dst", "t1_km1dep", "t1_fkey"})
+            cyclesemu::setPlain(proc.state(), id, 0);
+    }
+
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
                              {"7", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};

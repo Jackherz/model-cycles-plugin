@@ -52,6 +52,7 @@ struct mc_engine {
         int on, lp, trig;
         /* the Digitone II's filter types (dn2_filter), when type > 0 */
         int type, extra, ran;        /* ran: the type the state below belongs to */
+        double key;                  /* filter keytrack: semitones the cutoff moves (plugin) */
         double cf[8];                /* its coefficients where the last block ended */
         double s[4];                 /* ladder / Chamberlin / one-pole states */
         float comb[16384];           /* the comb's delay line */
@@ -209,7 +210,8 @@ static void dn2_coefs(int type, double v, double r, double x3, double *c)
 
 static void dn2_filter(mc_engine *g, int t, struct tf_state *f)
 {
-    double v = f->c / 256.0 + (f->a - 0x4000) / 256.0 * f->env;
+    /* FREQ steps are 1.1358 semitones each (0.065606 nepers) */
+    double v = f->c / 256.0 + (f->a - 0x4000) / 256.0 * f->env + f->key / 1.1358;
     v = v < 0 ? 0 : v > 127 ? 127 : v;
     const double r = (f->r < 0 ? 0 : f->r) / 256.0;
     double cn[8] = {0};
@@ -332,7 +334,8 @@ static void tf_after(mc_engine *g)
             lp = f->lp;                  /* finish on the old side, through the dry signal */
             wt = 0.0;
         }
-        double idx = (lp ? f->c : now) + (f->a - 0x4000) * f->env;
+        /* + the keytrack: 112.81 index units a semitone (5 Hz x 4400^(i/16384)) */
+        double idx = (lp ? f->c : now) + (f->a - 0x4000) * f->env + f->key * 112.81;
         idx = idx < 0 ? 0 : idx > 0x3fff ? 0x3fff : idx;
         const double fc = tf_cutoff_hz(idx);
         const double scale = (1 - pow(fc / 24000.0, 2.5)) * fmin(fmax((fc - 10.0) / 20.0, 0.0), 1.0);
@@ -453,6 +456,12 @@ double mc_filter_db(int type, double v, double r, double extra, double hz)
     }
     }
     return 20 * log10(cabs(h) + 1e-12);
+}
+
+void mc_engine_set_filter_key(mc_engine *g, int track, double semitones)
+{
+    if (track >= 0 && track <= 5)
+        g->tf[track].key = semitones;
 }
 
 void mc_engine_set_filter(mc_engine *g, int track, int type, int extra)
