@@ -21,3 +21,6 @@ plugin/build/
 plugin/build*.log
 # Screenshots of the firmware's display
 notes/*.png
+
+# Jack's Twinshot samples (not ours to publish)
+Twin Shot Sound Pack/

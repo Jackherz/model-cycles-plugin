@@ -76,6 +76,26 @@ static uint32_t modulo_add(uint32_t addr, int32_t delta, uint32_t mod)
     return (addr & ~mask) | ((addr + (uint32_t)delta) & mask);
 }
 
+/* n bytes between the buffer and memory from addr (to memory if out), the
+ * address wrapping within a 2^mod window as modulo_add does; returns the
+ * address after the last byte */
+static uint32_t ring_copy(uint8_t *buf, uint8_t *mem, uint32_t addr, uint32_t n, uint32_t mod, int out)
+{
+    if (!mod) {
+        if (out) memcpy(mem + addr, buf, n); else memcpy(buf, mem + addr, n);
+        return addr + n;
+    }
+    const uint32_t mask = (1u << mod) - 1;
+    for (uint32_t done = 0; done < n;) {
+        uint32_t off = addr & mask, run = mask + 1 - off;
+        if (run > n - done) run = n - done;
+        if (out) memcpy(mem + addr, buf + done, run); else memcpy(buf + done, mem + addr, run);
+        done += run;
+        addr = (addr & ~mask) | ((off + run) & mask);
+    }
+    return addr;
+}
+
 typedef struct {
     uint32_t saddr; uint16_t attr; int16_t soff; uint32_t nbytes, slast, daddr;
     uint16_t citer; int16_t doff; uint32_t dlast; uint16_t biter, csr;
@@ -114,13 +134,11 @@ static int run_tcd(mc_ctx *x, uint32_t tcd_at, tcd_t *t)
         return -1;
     uint32_t total = citer * t->nbytes, source, dest;
     if (t->soff == (int32_t)ssize && t->doff == (int32_t)dsize) {
-        /* whole major loop as one block copy: read all, then write all */
-        uint32_t a = t->saddr;
-        for (uint32_t i = 0; i < total; i++) { dma_buf[i] = mc_mem[a]; a = modulo_add(a, 1, smod); }
-        source = a;
-        a = t->daddr;
-        for (uint32_t i = 0; i < total; i++) { mc_mem[a] = dma_buf[i]; a = modulo_add(a, 1, dmod); }
-        dest = a;
+        /* whole major loop as one block copy: read all, then write all;
+         * in runs up to each wrap of a modulo window (what modulo_add did a
+         * byte at a time) */
+        source = ring_copy(dma_buf, mc_mem, t->saddr, total, smod, 0);
+        dest = ring_copy(dma_buf, mc_mem, t->daddr, total, dmod, 1);
     } else {
         source = t->saddr; dest = t->daddr;
         for (uint32_t it = 0; it < citer; it++) {

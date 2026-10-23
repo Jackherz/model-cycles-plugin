@@ -1550,12 +1550,17 @@ good open-source ones such as the Schwung catalogue's), with a switch.
     200/200 (`cap-driven`).
   - PGO redone: the bench is 67.3 us a block with the profile against
     81.7 without.
-- **Open (CPU)**: HostTest's default pattern now measures 8.6 % (10.4 %
-  without PGO), against 6.7-7.0 % before the profile was redone. The hooks
-  are off on that path and the bench gains 18 % from the profile, so the
-  likely cause is the new profile's code layout for the giant `mc_run`
-  favouring the bench's machine mix over HostTest's kit. To try: train PGO
-  on HostTest's pattern too, or several layouts.
+- **CPU, solved** (Jack: "fix that cpu issue"): HostTest measured 8.6 %
+  after the PGO redo. Sampling it (`sample`) showed `mc_mmio_write` at
+  about 30 % of the engine's time: the emulated eDMA (`run_tcd`) copied
+  each block transfer a byte at a time, recomputing the modulo window for
+  every byte. The firmware moves its delay lines and audio rings by DMA.
+  - `ring_copy` (runtime.c) does the same in `memcpy` runs up to each
+    wrap of the window, reading everything before writing as before.
+  - Replay is still bit-exact: 300/300 (`cap-filter`) and 200/200
+    (`cap-driven`), at 0.101 ms a call against 0.124.
+  - HostTest: 6.5 % (174 us a 128-sample callback), below the 6.7 % before
+    step 37.
 
 ## Next steps
 
