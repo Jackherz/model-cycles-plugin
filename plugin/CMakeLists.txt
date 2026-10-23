@@ -142,3 +142,11 @@ juce_add_console_app(CyclesEmuResamplerTest PRODUCT_NAME "CyclesEmuResamplerTest
 target_sources(CyclesEmuResamplerTest PRIVATE Test/ResamplerTest.cpp)
 target_compile_definitions(CyclesEmuResamplerTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(CyclesEmuResamplerTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
+
+# The installed plugins loaded as a host loads them (VST3, as Ableton Live),
+# run like Live runs them: a crash here is a crash in a DAW.
+juce_add_console_app(CyclesEmuLoadTest PRODUCT_NAME "CyclesEmuLoadTest")
+target_sources(CyclesEmuLoadTest PRIVATE Test/LoadTest.cpp)
+target_compile_definitions(CyclesEmuLoadTest PRIVATE JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(CyclesEmuLoadTest PRIVATE juce::juce_audio_processors juce::juce_gui_basics
+    juce::juce_recommended_config_flags)

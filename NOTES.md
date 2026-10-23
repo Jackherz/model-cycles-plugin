@@ -1388,6 +1388,32 @@ Jack: with a sound playing, changing a track's level made its meter jump.
   0.022, at most 0.029 a block. The level-0 check now allows the fade
   (under 0.005 after 100 blocks).
 
+## Step 34: CyclesFX hung Live; checkbox ticks in Midnight (2026-10-23)
+
+Jack: "CyclesFX crashes Ableton when I load it".
+- **What happened**: Live hung rather than crashed. Its log shows CyclesFX
+  created, then nothing. The system log has spindump's "hang likely" 2 s
+  later, and a force quit from the Dock (SIGTERM). Live's crash packs hold
+  no stack.
+- **Cause**: `prepareToPlay` set the latency twice for CyclesFX (0, then
+  32). Each change makes Live restart the plugin (setActive ->
+  `prepareToPlay`), which changed it twice again: an endless loop on Live's
+  main thread. CyclesEmu and CyclesVoice set it once, so they never looped.
+- **Fix**: the latency is worked out first and set once.
+- **New test, `CyclesEmuLoadTest`**: loads the installed VST3s through
+  JUCE's VST3 hosting, as Live does.
+  - It re-prepares on every latency report, as Live does, and fails if
+    reports keep coming. The unfixed CyclesFX failed at 48 and 44.1 kHz;
+    fixed, every plugin settles after at most one.
+  - Then 40 s in 64-sample and split blocks, with automation and the
+    editor on screen, and state saved and restored.
+  - Then two of each plugin processed in parallel threads with their
+    editors open.
+- **Checkbox ticks** (Jack: invisible in Midnight): drawn in kDark on
+  kField, both dark in Midnight. The tick is now `readableOn(kDark, kField,
+  7)`, contrast 7.5 in Midnight and 19.5-21 elsewhere (EditorShot). The
+  colour-scheme screenshots tick Punch and Gate.
+
 ## Next steps
 
 

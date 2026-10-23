@@ -888,7 +888,11 @@ void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     srcR.reserve(room);
     carry.ensureSize(4096);
     blockPos = kBlock;
-    setLatencySamples(resample ? juce::roundToInt(Resampler::latency() / ratio) : 0);
+    // The latency is set once, with its final value: each change makes the
+    // host restart the plugin (Live: setActive -> prepareToPlay), so setting
+    // a value and then another, as CyclesFX did (0, then 32), looped forever
+    // and hung Live's main thread (NOTES.md step 34).
+    int latency = resample ? juce::roundToInt(Resampler::latency() / ratio) : 0;
     if (isFx())
     {
         std::fill(std::begin(inCollectL), std::end(inCollectL), 0.0f);
@@ -896,7 +900,7 @@ void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         std::fill(std::begin(blockL), std::end(blockL), 0.0f);
         std::fill(std::begin(blockR), std::end(blockR), 0.0f);
         if (!resample)
-            setLatencySamples(kBlock);   // a block in, a block out
+            latency = kBlock;   // a block in, a block out
         else
         {
             // Both sides start with silence: the output (48 kHz) enough for its
@@ -917,9 +921,10 @@ void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
             // from host input (that)*rate/48k + D - inAhead: the latency is
             // inAhead - D + (outAhead - D)*rate/48k.
             const double d = Resampler::latency();
-            setLatencySamples(juce::roundToInt(inAhead - d + (outAhead - d) / ratio));
+            latency = juce::roundToInt(inAhead - d + (outAhead - d) / ratio);
         }
     }
+    setLatencySamples(latency);
 }
 
 bool CyclesEmuProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const

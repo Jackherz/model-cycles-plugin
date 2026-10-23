@@ -227,8 +227,12 @@ int main(int argc, char** argv)
             std::printf("no Decay readout found\n");
     }
 
-    // the five colour schemes, on track 1 (applied directly: no settings file)
+    // the five colour schemes, on track 1 (applied directly: no settings
+    // file), Punch and Gate ticked so the ticks show on each
     e->showPage(0);
+    const float punch0 = proc.state().getParameter("t1_punch")->getValue(), gate0 = proc.state().getParameter("t1_gate")->getValue();
+    cyclesemu::setPlain(proc.state(), "t1_punch", 1);
+    cyclesemu::setPlain(proc.state(), "t1_gate", 1);
     for (int i = 0; i < retro::kNumThemes; ++i)
     {
         retro::applyTheme(i);
@@ -237,6 +241,21 @@ int main(int argc, char** argv)
         f.deleteFile();
         juce::FileOutputStream os(f);
         juce::PNGImageFormat().writeImageToStream(img, os);
+    }
+    proc.state().getParameter("t1_punch")->setValueNotifyingHost(punch0);
+    proc.state().getParameter("t1_gate")->setValueNotifyingHost(gate0);
+    // the checkbox tick against its box, in every scheme
+    {
+        bool ok = true;
+        std::printf("checkbox tick contrast:");
+        for (int i = 0; i < retro::kNumThemes; ++i)
+        {
+            retro::applyTheme(i);
+            const float c = retro::contrast(retro::readableOn(retro::kDark, retro::kField, 7.0f), retro::kField);
+            std::printf(" %s %.1f", retro::kThemeNames[i], c);
+            ok &= c >= 4.5f;
+        }
+        std::printf(" -> %s\n", ok ? "PASS" : "FAIL");
     }
     retro::applyTheme(0);
 

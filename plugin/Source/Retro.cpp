@@ -708,9 +708,10 @@ void Look::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bool
     sunken(g, box);
     if (b.getToggleState())
     {
-        // a pixel tick
+        // a pixel tick, in ink that stands out from the box in every scheme
+        // (Midnight's field is dark: its kDark tick disappeared)
         static const char* tick[] = {"0000001", "0000011", "1000111", "1101110", "1111100", "0111000", "0010000"};
-        g.setColour(kDark);
+        g.setColour(readableOn(kDark, kField, 7.0f));
         for (int y = 0; y < 7; ++y)
             for (int x = 0; x < 7; ++x)
                 if (tick[y][x] == '1')
