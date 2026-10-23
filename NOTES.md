@@ -1488,7 +1488,9 @@ Jack: "CyclesFX crashes Ableton when I load it".
         Multimode, 1 Lowpass 4, 2 Equalizer, 3 Comb-, 4 Legacy (LP/HP),
         5 Comb+.
    j. ~~Legato and portamento~~: done, step 28.
-   k. CyclesFX: a smaller window (it shares the instrument's 960x780).
+   k. ~~CyclesFX: a smaller window~~: done (960x500, no tab bar: its one
+      page sits right under the system strip; `panelArea()`/`statusArea()`
+      follow the window's height).
    i. **CHOMPI's tape record function** (Jack, 2026-10-23,
       https://github.com/CHOMPI-Club/CHOMPI). After everything else is
       finished and debugged: study how it works and how it could fit the

@@ -289,6 +289,8 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void showPage(int index);   // 0-5 tracks, 6 FX
+    juce::Rectangle<int> panelArea() const;
+    juce::Rectangle<int> statusArea() const;
     int currentPage() const { return current; }
     void updateTrigLights();    // run by the timer; public for the tests
     bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }

@@ -9,7 +9,9 @@ namespace
 constexpr int kW = 960, kH = 780;
 // the window's furniture
 const juce::Rectangle<int> kTitle(4, 4, kW - 8, 22), kMenu(4, 27, kW - 8, 20), kToolbar(10, 52, kW - 20, 124),
-    kTabs(14, 180, kW - 28, 24), kPanel(10, 202, kW - 20, 546), kStatus(4, kH - 28, kW - 8, 24);
+    kTabs(14, 180, kW - 28, 24);
+// CyclesFX has one page: no tabs, and a window only as tall as its page
+constexpr int kFxH = 500;
 constexpr int kLogoW = 176;
 
 void setAccent(juce::Component& c, juce::Colour a) { c.getProperties().set("accent", (int)a.getARGB()); }
@@ -1228,7 +1230,10 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     // Sliders built their value readouts before they met our look: have
     // them rebuild them now, as Look::createSliderTextBox's PixelEntry.
     sendLookAndFeelChange();
-    setSize(kW, kH);
+    if (proc.isFx())   // one page: no tabs
+        for (auto* b : tabs)
+            b->setVisible(false);
+    setSize(kW, proc.isFx() ? kFxH : kH);
     showPage(0);
     for (int t = 0; t < proc.trackPages(); ++t)
         seenTrigs[t] = proc.trigCount(t);
@@ -1301,9 +1306,9 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
 
     // the page panel, and the status bar
     g.setColour(kFace);
-    g.fillRect(kPanel);
-    raised(g, kPanel);
-    auto sb = kStatus;
+    g.fillRect(panelArea());
+    raised(g, panelArea());
+    auto sb = statusArea();
     auto right = sb.removeFromRight(200);
     sunken(g, sb.withTrimmedRight(2), false);
     sunken(g, right, false);
@@ -1315,6 +1320,16 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     g.fillRect(right.getX() + 8, right.getCentreY() - 4, 8, 8);
     drawText(g, where, right.withTrimmedLeft(24), juce::Justification::centredLeft, kText);
 }
+
+// the page panel: below the tabs, or (CyclesFX, no tabs) right below the
+// system strip; the status bar along the bottom
+juce::Rectangle<int> CyclesEmuEditor::panelArea() const
+{
+    const int top = proc.isFx() ? 182 : 202;
+    return {10, top, kW - 20, statusArea().getY() - 4 - top};
+}
+
+juce::Rectangle<int> CyclesEmuEditor::statusArea() const { return {4, getHeight() - 28, kW - 8, 24}; }
 
 void CyclesEmuEditor::resized()
 {
@@ -1339,7 +1354,7 @@ void CyclesEmuEditor::resized()
         globals[2]->setBounds(top.removeFromRight(92).reduced(4, 0));   // output
     }
     codecTempo.setBounds(top.reduced(6, 0).withTrimmedTop(-6));
-    status.setBounds(kStatus.withTrimmedRight(202).reduced(8, 2));
+    status.setBounds(statusArea().withTrimmedRight(202).reduced(8, 2));
     menuBar.setBounds(kMenu);
     // left of the three caption boxes (3 x 18 + 2 px gap, 3 px margin)
     helpButton.setBounds(kTitle.getRight() - 3 - 56 - 22, kTitle.getY() + 3, 18, 16);
@@ -1348,7 +1363,7 @@ void CyclesEmuEditor::resized()
     for (auto* b : tabs)
         b->setBounds(bar.removeFromLeft(tw).withTrimmedRight(-1).withHeight(26));
     for (auto* p : pages)
-        p->setBounds(kPanel.reduced(10, 12));
+        p->setBounds(panelArea().reduced(10, 12));
 }
 
 void CyclesEmuEditor::setHelpMode(bool on)
