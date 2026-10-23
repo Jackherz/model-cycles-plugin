@@ -22,8 +22,8 @@ Bits fromRows(const char* const rows[N])
 // Perc: a struck diamond. Tone: one sine cycle. Chord: stacked voices.
 // The Syntakt engines: SD Vintage a snare drum, CP Vintage a clap's burst,
 // SY Toy a toy robot, SY Bits a bit-crushed staircase, SY Swarm three rows
-// of detuned saw teeth.
-const char* const kMachineRows[11][N] = {
+// of detuned saw teeth. SP Twinshot two one-shots side by side.
+const char* const kMachineRows[12][N] = {
     {"001111100", "010000010", "100111001", "101000101", "101010101", "101000101", "100111001", "010000010",
      "001111100"},
     {"100100010", "001001000", "010000101", "000100100", "101001001", "000010000", "100100101", "001000010",
@@ -46,6 +46,9 @@ const char* const kMachineRows[11][N] = {
      "000000000"},
     {"010010010", "110110110", "000000000", "001001001", "011011011", "000000000", "100100100", "101101101",
      "000000000"},
+    // SP TWINSHOT: two one-shot samples side by side
+    {"100000100", "110000110", "111000111", "110100110", "101010101", "100100100", "100000100", "100000100",
+     "100000100"},
 };
 // Sync: a crotchet (follows the tempo). Free: an infinity loop.
 const char* const kClockRows[2][N] = {
@@ -118,7 +121,7 @@ void drawIcon(juce::Graphics& g, IconSet set, int index, juce::Rectangle<int> ar
     Bits b{};
     switch (set)
     {
-        case IconSet::Machine: b = fromRows(kMachineRows[juce::jlimit(0, 10, index)]); break;
+        case IconSet::Machine: b = fromRows(kMachineRows[juce::jlimit(0, 11, index)]); break;
         case IconSet::Wave: b = waveBits(index); break;
         case IconSet::Trig: b = trigBits(index); break;
         case IconSet::Clock: b = fromRows(kClockRows[juce::jlimit(0, 1, index)]); break;

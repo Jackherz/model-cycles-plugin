@@ -114,6 +114,63 @@ int main(int argc, char** argv)
             failures += !std::isfinite(peak);
         }
     }
+    // a copy, as Live duplicates a Drum Rack cell: the sound page's
+    // parameters moved on the original, its state loaded into a fresh
+    // instance (before its prepareToPlay, and after), the same note played on
+    // both: the copy must sound like the original
+    for (auto& path : paths)
+    {
+        juce::OwnedArray<juce::PluginDescription> found;
+        vst3.findAllTypesForFile(found, path);
+        if (found.isEmpty() || found[0]->name == "CyclesFX")
+            continue;
+        auto play = [](juce::AudioPluginInstance& p) {
+            juce::AudioBuffer<float> buf(2, 64);
+            double e = 0;
+            for (int b = 0; b < 750; ++b)   // 1 s
+            {
+                juce::MidiBuffer midi;
+                if (b == 10)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                if (b == 400)
+                    midi.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                buf.clear();
+                p.processBlock(buf, midi);
+                e += buf.getRMSLevel(0, 0, 64) * buf.getRMSLevel(0, 0, 64);
+            }
+            return std::sqrt(e / 750.0);
+        };
+        juce::String error;
+        auto a = vst3.createInstanceFromDescription(*found[0], 48000.0, 64, error);
+        a->prepareToPlay(48000.0, 64);
+        // the sound page: every parameter of track / voice 1's SOUND section moved
+        for (auto* prm : a->getParameters())
+        {
+            const auto name = prm->getName(64);
+            for (auto* key : {"Pitch", "Decay", "Color", "Shape", "Sweep", "Contour", "Volume+Dist", "Pan",
+                              "Delay Send", "Reverb Send", "Level"})
+                if (name == key || name == juce::String("T1 ") + key)
+                    prm->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, prm->getValue() * 0.8f + 0.1f));
+        }
+        const double original = play(*a);
+        juce::MemoryBlock state;
+        a->getStateInformation(state);
+        for (int order = 0; order < 2; ++order)
+        {
+            auto b = vst3.createInstanceFromDescription(*found[0], 48000.0, 64, error);
+            if (order == 0)
+                b->setStateInformation(state.getData(), (int)state.getSize());
+            b->prepareToPlay(48000.0, 64);
+            if (order == 1)
+                b->setStateInformation(state.getData(), (int)state.getSize());
+            const double copy = play(*b);
+            const bool ok = original > 1e-4 && copy > original * 0.5 && copy < original * 2.0;
+            failures += !ok;
+            std::printf("%s copied (state loaded %s prepareToPlay): original rms %.4f, copy %.4f -> %s\n",
+                        found[0]->name.toRawUTF8(), order == 0 ? "before" : "after", original, copy, ok ? "PASS" : "FAIL");
+        }
+    }
+
     // all of them at once in one process, as in a Live set: each processed
     // on its own thread (Live runs tracks in parallel), editors open
     {

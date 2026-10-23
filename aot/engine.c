@@ -754,3 +754,23 @@ int mc_engine_peek(mc_engine *g, uint32_t addr)
 }
 
 void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n) { mc_mem_read(g->x, addr, dst, n); }
+
+void mc_engine_write(mc_engine *g, uint32_t addr, const void *src, uint32_t n)
+{
+    if (addr < MC_MMIO_BASE && n <= MC_MMIO_BASE - addr)   /* memory only, never a peripheral */
+        memcpy(g->x->mem + addr, src, n);
+}
+
+/* SP TWINSHOT's Sample 2 and Overdrive have no Cycles knob, and the firmware
+ * smoother slides any kit word without a descriptor back to 0, so the Syntakt
+ * bridge reads them from its own table, s16 cyem_twin[6][2], which only we
+ * write (gen_syntakt_engines.py prints its address) */
+#define TWIN_PARAMS 0x4303207eu
+
+void mc_engine_twin_param(mc_engine *g, int track, int which, int value)
+{
+    if (track < 0 || track >= 6 || which < 0 || which > 1)
+        return;
+    value = value < 0 ? 0 : value > 127 ? 127 : value;
+    mc_st16_raw(g->x, TWIN_PARAMS + 4 * track + 2 * which, (uint16_t)(value << 8));
+}

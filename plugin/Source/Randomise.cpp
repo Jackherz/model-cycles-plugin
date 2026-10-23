@@ -67,6 +67,14 @@ void randomise(juce::AudioProcessorValueTreeState& st, int t, RandomSection s, j
             set(st, t, "pan", d.chance(0.6f) ? 64 : d.bipolar(8, 40));
             set(st, t, "delaysend", d.chance(0.55f) ? 0 : d.between(12, 70));
             set(st, t, "reverbsend", d.chance(0.5f) ? 0 : d.between(12, 80));
+            if (current(st, t, "machine") == 11)   // SP TWINSHOT: two samples, mostly forward
+            {
+                auto sample = [&] { return d.chance(0.85f) ? d.between(64, 127) : d.between(0, 63); };
+                set(st, t, "color", sample());
+                set(st, t, "twsamp2", sample());
+                set(st, t, "twdrive", d.chance(0.7f) ? 0 : d.between(10, 70));
+                set(st, t, "decay", d.between(70, 127));
+            }
             return;
 
         case RandomSection::Lfo:

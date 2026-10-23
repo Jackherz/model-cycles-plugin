@@ -35,6 +35,11 @@ int mc_engine_get_mute(mc_engine *g, int track);
 uint32_t mc_engine_kit(mc_engine *g);
 int mc_engine_peek(mc_engine *g, uint32_t addr);
 void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n);
+/* Raw memory (big-endian, as the emulated CPU sees it), below the
+ * peripherals: Twinshot's samples and their table. */
+void mc_engine_write(mc_engine *g, uint32_t addr, const void *src, uint32_t n);
+/* A track's sound-record word written directly (no firmware call). */
+void mc_engine_twin_param(mc_engine *g, int track, int which, int value);   /* 0 Sample 2, 1 Overdrive: 0..127 */
 /* CyclesFX: from the next mc_engine_render on, add 32 frames of input (the
  * buffers are read during each render; refill them between renders) to the
  * delay send and the reverb send, times the two amounts (0..1). l = NULL

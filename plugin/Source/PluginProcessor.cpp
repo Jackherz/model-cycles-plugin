@@ -27,14 +27,16 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "Presets.h"
+#include "Settings.h"
 #include <cstring>
 
 namespace cyclesemu
 {
 // 6-10: the Syntakt's digital engines, added by Modded-Cycles' tweak
-// syntakt-sd-cp-toy-bits-swarm (NOTES.md step 16)
-const juce::StringArray kMachineNames{"Kick", "Snare", "Metal", "Perc", "Tone", "Chord",
-                                      "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm"};
+// syntakt-sd-cp-toy-bits-swarm (NOTES.md step 16); 11 its SP TWINSHOT,
+// ported here (step 38), playing a folder of samples
+const juce::StringArray kMachineNames{"Kick",       "Snare",      "Metal",  "Perc",    "Tone",     "Chord",
+                                      "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm", "SP Twinshot"};
 // As the firmware draws them: triangle, sine, square, saw, ENV, ramp, random.
 const juce::StringArray kLfoWaveNames{"Triangle", "Sine", "Square", "Saw", "Env", "Ramp", "Random"};
 // Elektron's usual order; the Model:Cycles draws these as icons (unverified).
@@ -67,7 +69,7 @@ const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep",
 
 // Record offsets, CCs and clamps: NOTES.md and scripts/engine_inputs.py.
 const ParamDef kTrackParams[] = {
-    {"machine", "Machine", 0x26, 0, 10, 70, Kind::Sound, Show::Plain},
+    {"machine", "Machine", 0x26, 0, 11, 70, Kind::Sound, Show::Plain},
     {"pitch", "Pitch", 0x28, 40, 88, 65, Kind::Sound, Show::Semitones},
     {"decay", "Decay", 0x38, 0, 127, 80, Kind::Sound, Show::Plain},
     {"color", "Color", 0x2a, 0, 127, 16, Kind::Sound, Show::Plain},
@@ -103,6 +105,10 @@ const ParamDef kTrackParams[] = {
     {"freso", "Filter Reso", 0x4e, 0, 127, 71, Kind::Sound, Show::Plain},
     {"fenv", "Filter Env", 0x50, 0, 127, -1, Kind::Sound, Show::Bipolar},
     {"fdec", "Filter Env Decay", 0x52, 0, 127, -1, Kind::Sound, Show::Plain},
+    // SP TWINSHOT's two settings beyond the Cycles' knobs (its bridge reads
+    // the track's k23 and k24, step 38): Sample 2, Overdrive
+    {"twsamp2", "Twinshot Sample 2", 0x42, 0, 127, -1, Kind::KitWord, Show::Plain},
+    {"twdrive", "Twinshot Overdrive", 0x44, 0, 127, -1, Kind::KitWord, Show::Plain},
     // legato and portamento (the plugin's): PORT, PTIM and AMOUNT, LEGATO,
     // and the Syntakt's portamento setup (NOTES.md step 28). The order here
     // is glideIds' below.
@@ -217,6 +223,10 @@ const juce::StringArray* choicesFor(const char* id)
 const char* const modIds[] = {"vm1dst", "vm1dep", "vm2dst", "vm2dep", "vm3dst", "vm3dep", "vm4dst", "vm4dep",
                                "km1dst", "km1dep", "km2dst", "km2dep", "km3dst", "km3dep", "km4dst", "km4dep",
                                "velvol", "fkey"};
+
+// Twinshot's own words: Sample 2 the Syntakt's default (65: the 2nd sample),
+// Overdrive off
+int kitWordDefault(const char* id) { return !std::strcmp(id, "twsamp2") ? 65 : 0; }
 
 // a modulation setting's starting value: none, and velocity to volume as
 // the engine plays it (Lin)
@@ -391,6 +401,14 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     }
     if (engine != nullptr)
         applyMix();
+    for (auto& s : slots)   // the Twinshot words the kit lacks
+        if (engine != nullptr && s.def->kind == Kind::KitWord)
+            applyAll(*s.def, s.track, s.lastParam);
+    if (engine != nullptr)   // the samples Twinshot plays, from the folder last chosen
+    {
+        if (twin->loadFolder(juce::File(settings().getValue("twinFolder"))) > 0)
+            twin->install(engine);
+    }
     if (engine != nullptr && isVoice())   // and one sound on every voice from the start
         for (auto& s : slots)
             applyAll(*s.def, s.track, s.lastParam);
@@ -400,9 +418,11 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     {
         auto* sounds = json["sound"].getDynamicObject();
         haveInitSounds = sounds != nullptr;
-        for (int m = 0; haveInitSounds && m < 11; ++m)
+        for (int m = 0; haveInitSounds && m < 12; ++m)
         {
             auto snd = (*sounds).getProperty(juce::String(m));
+            if (!snd.isObject() && m == 11)   // a state without Twinshot: Kick's, unused
+                snd = (*sounds).getProperty("0");
             haveInitSounds = snd.isObject();
             for (int k = 0; haveInitSounds && k < 33; ++k)
                 initSound[m][k] = snd[juce::Identifier(juce::String(k))];
@@ -418,7 +438,7 @@ void CyclesEmuProcessor::resetTrack(int t)
         auto* p = apvts.getParameter(paramId(t, id));
         return juce::roundToInt(p->convertFrom0to1(p->getValue()));
     };
-    const int machine = juce::jlimit(0, 10, plain("machine"));
+    const int machine = juce::jlimit(0, 11, plain("machine"));
     const int* k = initSound[machine];
     for (int i = 0; i < kNumTrackParams; ++i)
     {
@@ -445,6 +465,7 @@ void CyclesEmuProcessor::resetTrack(int t)
             case Kind::Glide: setPlain(apvts, id, (float)glideDefault(d.id)); break;
             case Kind::Filter: setPlain(apvts, id, 0.0f); break;
             case Kind::Mod: setPlain(apvts, id, (float)modDefault(d.id)); break;
+            case Kind::KitWord: setPlain(apvts, id, (float)kitWordDefault(d.id)); break;
             case Kind::Fx:
             case Kind::FxEngine: break;
         }
@@ -452,6 +473,27 @@ void CyclesEmuProcessor::resetTrack(int t)
 }
 
 void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
+
+// SP TWINSHOT's samples: read here (message thread), installed by the audio
+// thread at its next block (renderEngineBlock), or now if it isn't running
+int CyclesEmuProcessor::loadTwinFolder(const juce::File& folder)
+{
+    if (twinPending.load())
+        return -1;   // the last one isn't in yet
+    auto next = std::make_unique<TwinSamples>();
+    const int n = next->loadFolder(folder);
+    settings().setValue("twinFolder", folder.getFullPathName());
+    settings().saveIfNeeded();
+    if (!isPrepared)
+    {
+        next->install(engine);
+        twin = std::move(next);
+        return n;
+    }
+    twinNext = std::move(next);
+    twinPending.store(true, std::memory_order_release);
+    return n;
+}
 
 // The delay's and reverb's engines (FxEngines.h, NOTES.md step 37). The
 // audio thread picks up the types; one not created yet is asked of the
@@ -523,7 +565,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
         return fromKit();
     // the init sound of the track's current machine
     const auto* mp = apvts.getParameter(paramId(t, "machine"));
-    const int m = mp ? juce::jlimit(0, 10, juce::roundToInt(mp->convertFrom0to1(mp->getValue()))) : 0;
+    const int m = mp ? juce::jlimit(0, 11, juce::roundToInt(mp->convertFrom0to1(mp->getValue()))) : 0;
     const int* k = initSound[m];
     for (int i = 0; i < kNumTrackParams; ++i)
         if (bare == kTrackParams[i].id)
@@ -545,6 +587,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                 case Kind::Level:
                 case Kind::Mute:
                 case Kind::Solo:
+                case Kind::KitWord: return (float)kitWordDefault(d.id);
                 case Kind::Fx:
                 case Kind::FxEngine: break;
             }
@@ -625,6 +668,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::Glide: return glideDefault(s.def->id);
         case Kind::Filter: return 0;   // the Cycles' filter, as the firmware has it
         case Kind::FxEngine: return std::strcmp(s.def->id, "delayx") && std::strcmp(s.def->id, "reverbx") ? 0 : 64;
+        case Kind::KitWord: return kitWordDefault(s.def->id);   // the kit has none: the Syntakt's defaults
         case Kind::Mod: return modDefault(s.def->id);
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
@@ -925,6 +969,12 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
                 glides[track].userPitch = v;
                 writePitch(track, true);
             }
+            else if (d.offset == 0x26)   // machine: at once, not slid through the others by the smoother
+            {
+                knobValue[track][(0x26 - 0x14) / 2] = v;
+                mc_engine_param(engine, track, 0x26, v);
+                mc_engine_snap_param(engine, track, 0x26);
+            }
             else if (d.offset >= 0x14)   // with the last note's velocity / key offset
             {
                 const int k = (d.offset - 0x14) / 2;
@@ -942,6 +992,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::FxEngine: updateFxEngines(); break;
+        case Kind::KitWord: mc_engine_twin_param(engine, track, d.offset == 0x42 ? 0 : 1, v); break;
         case Kind::Level:
             levelNow[track] = v;
             applyMix();
@@ -1045,6 +1096,7 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
 
 void CyclesEmuProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    isPrepared = true;
     resample = std::abs(sampleRate - 48000.0) > 0.5;
     ratio = 48000.0 / sampleRate;
     if (resample)
@@ -1183,6 +1235,12 @@ void CyclesEmuProcessor::fxProcess(juce::AudioBuffer<float>& buffer)
 void CyclesEmuProcessor::renderEngineBlock()
 {
     applyParameterChanges();
+    if (twinPending.load(std::memory_order_acquire))   // a new sample bank: in between blocks
+    {
+        twinNext->install(engine);
+        std::swap(twin, twinNext);
+        twinPending.store(false, std::memory_order_release);
+    }
     if (fxRecheck.exchange(false))
         updateFxEngines();
     updateGlides();

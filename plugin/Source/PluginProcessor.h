@@ -7,6 +7,7 @@
 #include "DcBlock.h"
 #include "Resampler.h"
 #include "FxEngines.h"
+#include "TwinSamples.h"
 
 namespace cyclesemu
 {
@@ -28,6 +29,7 @@ enum class Kind
     Filter,     // the filter's type and third knob (mc_engine_set_filter)
     Mod,        // velocity and key modulation, as the Syntakt's SOUND SETUP: read at each note
     FxEngine,   // the delay's / reverb's engine and third knob (FxEngines.cpp)
+    KitWord,    // a Twinshot word the Cycles has no knob for, in the Syntakt bridge's own table
 };
 
 // How the editor and the host show its value.
@@ -105,7 +107,7 @@ public:
     ~CyclesEmuProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override { isPrepared = false; }
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -147,6 +149,12 @@ public:
     int peek(uint32_t addr) const { return mc_engine_peek(engine, addr); }
     void setSmoothFilter(bool on) { mc_engine_set_smooth_filter(engine, on); }
     void createFxEnginesNow() { handleAsyncUpdate(); }   // tests: no message loop
+    // SP TWINSHOT's sample bank (TwinSamples.h): a folder of up to 64 WAVs,
+    // remembered in the settings. Load on the message thread; the engine
+    // takes it at its next block.
+    int loadTwinFolder(const juce::File& folder);
+    const cyclesemu::TwinSamples& twinSamples() const { return *twin; }
+    bool twinInstalled() const { return !twinPending.load(); }
     void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }
     uint32_t kitAddress() const { return mc_engine_kit(engine); }
     int engineValue(int track, int offset) const
@@ -243,6 +251,9 @@ private:
     // the delay and reverb engines (FxEngines.h): created on the message
     // thread when first chosen, run from the engine's render
     cyclesemu::FxEngines fxEngines;
+    std::unique_ptr<cyclesemu::TwinSamples> twin = std::make_unique<cyclesemu::TwinSamples>(), twinNext;
+    std::atomic<bool> twinPending{false};
+    std::atomic<bool> isPrepared{false};   // between prepareToPlay and releaseResources: blocks may run
     void handleAsyncUpdate() override;   // creates engines the audio thread asked for
     void updateFxEngines();              // audio thread: the types chosen, to the engine
     static void fxCallback(void* user, int which, const float* in, const float* fw, float* out);
@@ -288,7 +299,7 @@ private:
     double targetBpm = 120.0, appliedBpm = 0.0;
     std::atomic<double> shownBpm{120.0};
     std::atomic<float> outPeak{0.0f};
-    int initSound[11][33] = {};
+    int initSound[12][33] = {};
     bool haveInitSounds = false;
     juce::ValueTree initKit;
 

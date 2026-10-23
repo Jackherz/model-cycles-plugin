@@ -3,6 +3,7 @@ firmware/
 data/
 data-st/
 data-stf/
+data-sttw/
 *.syx
 *.snap
 *.img
@@ -24,3 +25,4 @@ notes/*.png
 
 # Jack's Twinshot samples (not ours to publish)
 Twin Shot Sound Pack/
+aot/build-sttw/

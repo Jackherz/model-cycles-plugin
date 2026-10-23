@@ -1162,6 +1162,17 @@ int main(int argc, char** argv)
                 return out;
             };
             const auto with = render(110), without = render(0);   // (the time: the last render, 5 s of audio)
+            if (const char* dir = std::getenv("FX_WET_DIR"))   // the wet signal, raw float stereo, to listen or analyse
+                if (auto* fp = std::fopen(juce::File(dir).getChildFile(juce::String(which) + "_" + juce::String(type) + ".f32")
+                                              .getFullPathName().toRawUTF8(), "wb"))
+                {
+                    for (size_t i = 0; i < with.size(); ++i)
+                    {
+                        const float d = with[i] - without[i];
+                        std::fwrite(&d, 4, 1, fp);
+                    }
+                    std::fclose(fp);
+                }
             double e = 0;
             bool finite = true;
             for (size_t i = 0; i < with.size(); ++i)
@@ -1190,6 +1201,58 @@ int main(int argc, char** argv)
         }
         std::printf("fx engines: every type plays, finite, within 6 dB of the Cycles' level -> %s\n", ok ? "PASS" : "FAIL");
     }
+
+    // SP TWINSHOT's two pages on track 1
+    {
+        e->showPage(0);
+        const float m0 = proc.state().getParameter("t1_machine")->getValue();
+        cyclesemu::setPlain(proc.state(), "t1_machine", 11);
+        for (int page = 0; page < 2; ++page)
+        {
+            e->setTwinPage2(page == 1);
+            auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+            auto f = out.getChildFile(juce::String("editor-twinshot-p") + juce::String(page + 1) + ".png");
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::PNGImageFormat().writeImageToStream(img, os);
+        }
+        e->setTwinPage2(false);
+        proc.state().getParameter("t1_machine")->setValueNotifyingHost(m0);
+    }
+
+    if (std::getenv("MACHINE_DIAG"))
+        for (int m = 0; m < 12; ++m)
+            for (int loaded = 1; loaded >= (m == 11 ? 0 : 1); --loaded)
+            {
+                CyclesEmuProcessor f(Product::Full);
+                if (!loaded)
+                    f.loadTwinFolder(juce::File("/nonexistent"));
+                cyclesemu::setPlain(f.state(), "midimode", 1);
+                cyclesemu::setPlain(f.state(), "t1_machine", (float)m);
+                f.prepareToPlay(48000, 32);
+                juce::AudioBuffer<float> buf(2, 32);
+                double e = 0, zc = 0;
+                float prev = 0;
+                for (int b = 0; b < 1500 + 400; ++b)
+                {
+                    juce::MidiBuffer midi;
+                    if (b == 1500)
+                        midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                    buf.clear();
+                    f.processBlock(buf, midi);
+                    if (b >= 1500)
+                        for (int i = 0; i < 32; ++i)
+                        {
+                            const float x = buf.getSample(0, i);
+                            e += (double)x * x;
+                            zc += (prev < 0) != (x < 0);
+                            prev = x;
+                        }
+                }
+                std::printf("machine %2d (%s)%s: rms %.4f, zero crossings %.0f, engine machine %d, twin samples %d\n", m,
+                            cyclesemu::kMachineNames[m].toRawUTF8(), m == 11 ? (loaded ? " loaded" : " no samples") : "",
+                            std::sqrt(e / (400 * 32)), zc, f.engineValue(0, 0x26), f.twinSamples().count());
+            }
 
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},

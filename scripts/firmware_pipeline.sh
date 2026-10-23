@@ -11,6 +11,8 @@ shift 3 2>/dev/null || shift $#
 cd $P/re/digiemu
 export CYCLES_FW=$ROOT:$SYX CYCLES_MACHINES=$(( ${#${(z)MACHINES}} ))
 echo "== boot"; uv run --no-sync python ../../scripts/boot_firmware.py ../../$ROOT $SYX | tail -3
+# the coverage accumulates: blocks of an earlier build would overlap this one's
+rm -f ../../$ROOT/coverage.json
 echo "== coverage"; env MACHINES="$MACHINES" COV_OUT=../../$ROOT/coverage.json "$@" $P/scripts/coverage_batch.sh | tail -3
 echo "== capture"
 uv run --no-sync python ../../scripts/capture.py --calls 200 --midi 20:90:3c:64 --midi 40:b1:46:08 \

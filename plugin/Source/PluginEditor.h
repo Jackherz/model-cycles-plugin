@@ -216,6 +216,8 @@ class TrackPage : public juce::Component
 public:
     TrackPage(CyclesEmuProcessor&, int track);
     void showSetup(bool);   // the SOUND SETUP panel over the page
+    void refreshTwinNames();   // the Sample knobs' names, after a new sample folder
+    void setTwinPage2(bool p2) { twinOnPage2 = p2; showTwinPage(); }   // tests
     std::function<void(const juce::String&)> beforeChange;   // the editor's undo snapshot
     void resized() override;
 
@@ -227,6 +229,13 @@ private:
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
+    // SP TWINSHOT's second page (Sample 2, Overdrive in the Color / Shape
+    // places), switched from the SOUND header, as the hardware's pages
+    ParamControl *twinSample2 = nullptr, *twinDrive = nullptr;
+    juce::TextButton twinPage{"Page 1"};
+    bool twinOnPage2 = false, twinMachine = false;
+    void showTwinPage();
+    CyclesEmuProcessor* processor = nullptr;
     ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
     ModPanel modPanel;
     juce::TextButton setupButton{"Setup"};
@@ -318,6 +327,7 @@ public:
     juce::Rectangle<int> statusArea() const;
     int currentPage() const { return current; }
     void showSoundSetup(bool);   // the current track page's SOUND SETUP panel
+    void setTwinPage2(bool);     // tests: SP TWINSHOT's page on the current track page
     void updateTrigLights();    // run by the timer; public for the tests
     bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }
     void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control

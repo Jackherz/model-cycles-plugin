@@ -160,6 +160,13 @@ const std::map<juce::String, HelpText> kHelp = {
       "TRACKING: the same with the note played, centred on middle C: depth 8 moves the knob a step per note, 127 "
       "sixteen. VEL > VOL: how velocity sets the volume (Lin as played, Log brings soft notes up, Exp favours hard "
       "ones, Off ignores it). FILT KEY: the filter follows the keyboard (127: fully)."}},
+    {"twsamp2",
+     {"Twinshot: Sample 2",
+      "SP TWINSHOT plays two samples at once: Sample 1 (the first knob) and Sample 2, from the folder chosen in Kit > "
+      "Twinshot Samples Folder (up to 64 WAVs, in name order). From the middle up: the samples forward; below the "
+      "middle: the same samples reversed (shown with <). Mix balances the two, Tune 2 pitches the second, Filter 1 "
+      "colours the first."}},
+    {"twdrive", {"Twinshot: Overdrive", "Drives the two samples into saturation. 0 is clean."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

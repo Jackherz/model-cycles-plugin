@@ -27,7 +27,9 @@ set(AOT ${CMAKE_CURRENT_SOURCE_DIR}/../aot)
 # 1.13), whichever has been made. Its engine state must match:
 # ~/Library/Application Support/CyclesEmu/state.
 if(NOT DEFINED MC_BUILD)
-    if(EXISTS ${AOT}/build-stf/render.c)
+    if(EXISTS ${AOT}/build-sttw/render.c)
+        set(MC_BUILD build-sttw)       # + SP TWINSHOT (NOTES.md step 38)
+    elseif(EXISTS ${AOT}/build-stf/render.c)
         set(MC_BUILD build-stf)
     elseif(EXISTS ${AOT}/build-st/render.c)
         set(MC_BUILD build-st)
@@ -80,7 +82,7 @@ juce_add_plugin(CyclesEmu
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
 
-target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
+target_sources(CyclesEmu PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp Source/TwinSamples.cpp)
 target_compile_definitions(CyclesEmu PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
@@ -102,7 +104,7 @@ juce_add_plugin(CyclesVoice
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
-target_sources(CyclesVoice PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
+target_sources(CyclesVoice PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp Source/TwinSamples.cpp)
 target_compile_definitions(CyclesVoice PUBLIC
     CYCLES_PRODUCT=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
@@ -124,7 +126,7 @@ juce_add_plugin(CyclesFX
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE)
-target_sources(CyclesFX PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
+target_sources(CyclesFX PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp Source/TwinSamples.cpp)
 target_compile_definitions(CyclesFX PUBLIC
     CYCLES_PRODUCT=2 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
@@ -145,7 +147,7 @@ target_link_libraries(CyclesEmuHostTest PRIVATE mcengine cyemfx
 
 # Render the editor's pages to PNG, to check the layout without a host.
 juce_add_console_app(CyclesEmuEditorShot PRODUCT_NAME "CyclesEmuEditorShot")
-target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp)
+target_sources(CyclesEmuEditorShot PRIVATE Test/EditorShot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Retro.cpp Source/Help.cpp Source/Icons.cpp Source/Presets.cpp Source/Randomise.cpp Source/FxEngines.cpp Source/TwinSamples.cpp)
 target_compile_definitions(CyclesEmuEditorShot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(CyclesEmuEditorShot PRIVATE mcengine cyemfx juce::juce_audio_utils juce::juce_dsp
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)

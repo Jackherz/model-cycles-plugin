@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "Settings.h"
 #include "LfoShape.h"
 
 using namespace cyclesemu;
@@ -202,6 +203,18 @@ void Section::resized()
     // rows) share the rest, and the spare height spreads out between rows.
     if (dice)
         dice->setBounds(getWidth() - 36, 0, 24, 18);
+    // only what is shown: hidden controls take no cell, and a row with none
+    // shown takes no line (Twinshot's own row, step 38)
+    std::vector<Row> rows;
+    for (auto& row : this->rows)
+    {
+        Row shown{{}, row.custom, row.minHeight};
+        for (auto* c : row.controls)
+            if (c->isVisible())
+                shown.controls.push_back(c);
+        if (shown.custom != nullptr || !shown.controls.empty())
+            rows.push_back(std::move(shown));
+    }
     auto r = getLocalBounds().reduced(12, 8);
     r.removeFromTop(16);
     if (rows.empty())
@@ -692,6 +705,26 @@ void ModPanel::resized()
     close.setBounds(o.removeFromBottom(28).withSizeKeepingCentre(100, 26));
 }
 
+// SP TWINSHOT's page 1 (the macro knobs as Sample 1, Filter 1, Mix, Tune 2)
+// or page 2 (Sample 2 and Drive in their places); other machines: page 1
+void TrackPage::showTwinPage()
+{
+    const bool p2 = twinMachine && twinOnPage2;
+    for (int i = 0; i < 4; ++i)   // Color .. Contour
+        macroKnobs[i]->setVisible(!p2);
+    twinSample2->setVisible(p2);
+    twinDrive->setVisible(p2);
+    twinPage.setVisible(twinMachine);
+    twinPage.setButtonText(p2 ? "Page 2" : "Page 1");
+    sound.resized();
+}
+
+void TrackPage::refreshTwinNames()
+{
+    machineAtt->sendInitialUpdate();   // Sample 1's text, if Twinshot
+    twinSample2->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
+}
+
 void TrackPage::showSetup(bool on)
 {
     modPanel.setVisible(on);
@@ -712,8 +745,22 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     auto* shape = make(st, t, "shape", "Shape", S::Knob);
     auto* sweep = make(st, t, "sweep", "Sweep", S::Knob);
     auto* contour = make(st, t, "contour", "Contour", S::Knob);
+    // SP TWINSHOT's page 2 shares this row: its knobs hidden until then
+    processor = &proc;
+    twinSample2 = make(st, t, "twsamp2", "Smp 2", S::Knob);
+    twinDrive = make(st, t, "twdrive", "Drive", S::Knob);
+    twinSample2->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
     sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob), color, shape,
-                  sweep, contour});
+                  sweep, contour, twinSample2, twinDrive});
+    twinSample2->setVisible(false);
+    twinDrive->setVisible(false);
+    sound.minColumns = 6;   // the knobs one size on either Twinshot page
+    twinPage.onClick = [this] {
+        twinOnPage2 = !twinOnPage2;
+        showTwinPage();
+    };
+    twinPage.getProperties().set("helpId", paramId(t, "twsamp2"));
+    addChildComponent(twinPage);
     macroKnobs[0] = color, macroKnobs[1] = shape, macroKnobs[2] = sweep, macroKnobs[3] = contour,
     macroKnobs[4] = punch;
     // Modded-Cycles' guide: what each Syntakt engine maps the knobs to
@@ -721,23 +768,25 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     machineAtt = std::make_unique<juce::ParameterAttachment>(
         *st.getParameter(paramId(t, "machine")),
         [this](float v) {
-            static const char* labels[6][5] = {
+            static const char* labels[7][5] = {
                 {"Color", "Shape", "Sweep", "Contour", "Punch"},   // the six originals
                 {"Inharm", "Frq Cpx", "P.Sweep", "Mod Env", "Punch"},
                 {"Body Ch", "Balance", "Spc Crn", "Body Ev", "Punch"},
                 {"Form", "Impact", "Bright", "Prt Dec", "Punch"},
                 {"Detune", "Balance", "Rate Rx", "Wave", "Bits"},
                 {"Nse Mod", "Det Anm", "Detune", "Osc Mix", "Sub"},
+                {"Smp 1", "Flt 1", "Mix", "Tune 2", "-"},   // SP TWINSHOT (Punch unused)
             };
             // and the LFO's destinations for them (entries 2-6: color, shape,
             // sweep, contour, punch), longer names where the list has room
-            static const char* dests[6][5] = {
+            static const char* dests[7][5] = {
                 {"Color", "Shape", "Sweep", "Contour", "Punch"},
                 {"Inharm", "Freq Complex", "Pitch Sweep", "Mod Envelope", "Punch"},
                 {"Body Char", "Balance", "Spacing Crnch", "Body Envelope", "Punch"},
                 {"Form", "Impact", "Bright", "Partial Decay", "Punch"},
                 {"Detune", "Balance", "Rate Redux", "Waveform", "Bit Redux"},
                 {"Noise Mod", "Detune Anim", "Detune", "Osc Mix", "Sub-octave"},
+                {"Sample 1", "Filter 1", "Mix", "Tune 2", "Punch"},
             };
             int m = juce::roundToInt(v), row = m < 6 ? 0 : m - 5;
             for (int i = 0; i < 5; ++i)
@@ -748,12 +797,24 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                 if (i < 4)   // the modulation's lists: Color..Contour are entries 2-5 (short names)
                     modPanel.setDestText(2 + i, labels[row][i]);
             }
+            // SP TWINSHOT: its pages, the sample names, no Punch
+            const bool twinOn = m == 11;
+            macroKnobs[4]->setEnabled(!twinOn);
+            twinMachine = twinOn;
+            if (!twinOn)
+                twinOnPage2 = false;
+            showTwinPage();
+            if (twinOn)
+                macroKnobs[0]->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
+            else
+                macroKnobs[0]->setValueText([](double x) { return juce::String(juce::roundToInt(x)); });
             scope.repaint();   // its destination tag
         },
         nullptr);
     sound.addRow({make(st, t, "voldist", "Vol+Dst", S::Knob), make(st, t, "pan", "Pan", S::Knob),
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});
+
     lfo.addRow({make(st, t, "lfowave", "Wave", S::Icons, IconSet::Wave),
                 make(st, t, "lforeset", "Trig", S::Icons, IconSet::Trig)});
     auto* dest = make(st, t, "lfodest", "Destination", S::Choice);
@@ -859,6 +920,8 @@ void TrackPage::resized()
     // SETUP in the SOUND header, left of its dice
     setupButton.setBounds(sound.getRight() - 36 - 76, sound.getY() - 1, 70, 20);
     setupButton.toFront(false);
+    twinPage.setBounds(setupButton.getX() - 78, sound.getY() - 1, 72, 20);   // SP TWINSHOT only
+    twinPage.toFront(false);
     modPanel.setBounds(getLocalBounds());
 }
 
@@ -1120,6 +1183,28 @@ void MenuStrip::mouseDown(const juce::MouseEvent& e)
 juce::PopupMenu CyclesEmuEditor::kitMenu()
 {
     juce::PopupMenu m;
+    // SP TWINSHOT's samples: a folder of up to 64 WAVs (in name order)
+    m.addItem("Twinshot Samples Folder...", [this] {
+        chooser = std::make_unique<juce::FileChooser>("Twinshot samples: a folder of WAVs (up to 64, in name order)",
+                                                      proc.twinSamples().folder);
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                             [this](const juce::FileChooser& fc) {
+                                 const auto dir = fc.getResult();
+                                 if (!dir.isDirectory())
+                                     return;
+                                 const int n = proc.loadTwinFolder(dir);
+                                 status.setText(n < 0 ? juce::String("Twinshot: still loading the last folder")
+                                                      : "Twinshot: " + juce::String(n) + " samples from " + dir.getFileName(),
+                                                juce::dontSendNotification);
+                                 juce::Timer::callAfterDelay(200, [safe = juce::Component::SafePointer<CyclesEmuEditor>(this)] {
+                                     if (safe != nullptr)
+                                         for (auto* p : safe->pages)
+                                             if (auto* tp = dynamic_cast<TrackPage*>(p))
+                                                 tp->refreshTwinNames();
+                                 });
+                             });
+    });
+    m.addSeparator();
     m.addItem(undoWhat.isEmpty() ? juce::String("Undo") : "Undo " + undoWhat, undoKit.isValid(), false, [this] {
         auto redo = kitToTree(proc.state());
         treeToKit(proc.state(), undoKit);
@@ -1209,18 +1294,7 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
 
 // The colour scheme is a preference shared by every instance, kept in
 // ~/Library/Application Support/CyclesEmu/CyclesEmu.settings.
-static juce::PropertiesFile& settings()
-{
-    static juce::PropertiesFile file([] {
-        juce::PropertiesFile::Options o;
-        o.applicationName = "CyclesEmu";
-        o.filenameSuffix = "settings";
-        o.folderName = "CyclesEmu";
-        o.osxLibrarySubFolder = "Application Support";
-        return o;
-    }());
-    return file;
-}
+// (settings(): Settings.h)
 
 juce::PopupMenu CyclesEmuEditor::viewMenu()
 {
@@ -1382,6 +1456,12 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
 }
 
 CyclesEmuEditor::~CyclesEmuEditor() { setLookAndFeel(nullptr); }
+
+void CyclesEmuEditor::setTwinPage2(bool p2)
+{
+    if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
+        tp->setTwinPage2(p2);
+}
 
 void CyclesEmuEditor::showSoundSetup(bool on)
 {
