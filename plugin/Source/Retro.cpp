@@ -767,8 +767,15 @@ void Look::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool dow
     auto t = r.withSizeKeepingCentre(w, textHeight());
     if (tab)
     {
-        // the track's colour chip, N64 style
+        // the track's colour chip, N64 style; lit (a halo, brighter) while
+        // the track is played
         g.setColour(accentFor(b));
+        if (b.getProperties()["lit"])
+        {
+            g.setColour(accentFor(b).withAlpha(0.6f));
+            g.fillRect(t.getX() - 3, t.getY() - 1, 14, 14);
+            g.setColour(accentFor(b));
+        }
         g.fillRect(t.getX(), t.getY() + 2, 8, 8);
         if (on)
         {

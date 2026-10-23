@@ -143,6 +143,10 @@ public:
     // a track's peak since the last call (0..1), after its level (post-fader): for the mixer's meters
     float takeTrackPeak(int t) { return trackPeaks[t].exchange(0.0f, std::memory_order_relaxed); }
     bool trackAudible(int t) const { return levelSent[t] != 0; }
+    // note-ons per track (CyclesVoice: all on 0) and the track played last,
+    // for the editor's tab lights and Follow Played Track
+    uint32_t trigCount(int t) const { return trigCounts[t].load(std::memory_order_relaxed); }
+    int lastTriggered() const { return lastTrig.load(std::memory_order_relaxed); }
 
 private:
     static BusesProperties busesFor(Product);
@@ -227,6 +231,13 @@ private:
     // per-track peaks since the editor last looked, from the render's track
     // buffers (before level and pan)
     std::atomic<float> trackPeaks[cyclesemu::kTracks] = {};
+    std::atomic<uint32_t> trigCounts[cyclesemu::kTracks] = {};
+    std::atomic<int> lastTrig{-1};
+    void countTrig(int page)
+    {
+        trigCounts[page].fetch_add(1, std::memory_order_relaxed);
+        lastTrig.store(page, std::memory_order_relaxed);
+    }
     juce::String engineError;
     std::vector<Slot> slots;
     juce::AudioProcessorValueTreeState apvts;

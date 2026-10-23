@@ -1356,6 +1356,26 @@ the Digitone II's six filter machines, re-created from its DSP code.
   - EditorShot: the meter at level 64 is x0.235 of level 127 (0.254
     expected; a peak), and 0 at level 0.
 
+## Step 32: which track is playing (2026-10-24)
+
+Jack: make clearer which voice is triggered, like the Digitakt's display
+switching to the track played, if it is cheap.
+- **Tab lights**: each track tab's colour chip glows for 150 ms when the
+  track is played, on any page. CyclesVoice's one tab lights on any note.
+- **Follow Played Track** (View menu, on by default, kept in
+  `CyclesEmu.settings`):
+  - From a track page, the editor shows the track played last.
+  - It never switches away from the mixer or the FX page.
+  - It switches at most every 250 ms, so a pattern doesn't flicker.
+- **Cost**:
+  - Audio thread: an atomic counter and the last track, per note-on
+    (`countTrig`).
+  - Editor: its timer now runs at 30 Hz instead of 8, and only repaints a
+    tab whose light changes.
+- EditorShot: a drum-map note for track 3 shows its page and lights its
+  tab, which goes out after 150 ms. On the mixer, a note for track 5 lights
+  its tab and the mixer stays.
+
 ## Next steps
 
 

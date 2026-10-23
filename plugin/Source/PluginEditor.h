@@ -289,6 +289,9 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void showPage(int index);   // 0-5 tracks, 6 FX
+    int currentPage() const { return current; }
+    void updateTrigLights();    // run by the timer; public for the tests
+    bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }
     void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control
 
     void mouseMove(const juce::MouseEvent&) override;
@@ -322,6 +325,10 @@ private:
     void remember(const juce::String& what);
     juce::Random rng;
     juce::OwnedArray<juce::TextButton> tabs;
+    // the tab lights and Follow Played Track (View menu, kept in the settings)
+    uint32_t seenTrigs[cyclesemu::kTracks] = {};
+    double litUntil[cyclesemu::kTracks] = {}, lastFollow = 0;
+    bool follow = true;
     juce::OwnedArray<juce::Component> pages;
     int current = 0;
 };

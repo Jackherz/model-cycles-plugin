@@ -563,6 +563,8 @@ void CyclesEmuProcessor::applyAll(const ParamDef& d, int track, int v)
 
 void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
 {
+    if (on)
+        countTrig(0);
     const auto gs = glideSettings(0);
     // Legato: the sound plays mono, on the first voice. A key is released
     // wherever it plays, should Legato have changed while it was down.
@@ -664,6 +666,8 @@ void CyclesEmuProcessor::legatoTo(int track, int note, const GlideSettings& s)
 // the last note when Portamento is on (Legato Only: only from a held one).
 void CyclesEmuProcessor::trackNote(int track, int note, int velocity, bool on)
 {
+    if (on && !isVoice())   // (CyclesVoice counted in voiceNote)
+        countTrig(track);
     const auto s = glideSettings(isVoice() ? 0 : track);
     auto& g = glides[track];
     const bool anyHeld = g.numHeld > 0;

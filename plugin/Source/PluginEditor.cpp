@@ -1082,6 +1082,15 @@ static juce::PropertiesFile& settings()
 juce::PopupMenu CyclesEmuEditor::viewMenu()
 {
     juce::PopupMenu m;
+    if (proc.trackPages() > 1)
+    {
+        m.addItem("Follow Played Track", true, follow, [this] {
+            follow = !follow;
+            settings().setValue("followPlayed", follow);
+            settings().saveIfNeeded();
+        });
+        m.addSeparator();
+    }
     for (int i = 0; i < kNumThemes; ++i)
         m.addItem(juce::String("Colour: ") + kThemeNames[i], true, currentTheme() == i, [this, i] { setTheme(i); });
     return m;
@@ -1230,7 +1239,10 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     sendLookAndFeelChange();
     setSize(kW, kH);
     showPage(0);
-    startTimerHz(8);
+    follow = settings().getBoolValue("followPlayed", true);
+    for (int t = 0; t < proc.trackPages(); ++t)
+        seenTrigs[t] = proc.trigCount(t);
+    startTimerHz(30);   // the tab lights; the status line only changes when its text does
 }
 
 CyclesEmuEditor::~CyclesEmuEditor() { setLookAndFeel(nullptr); }
@@ -1448,8 +1460,38 @@ void HelpBubble::paint(juce::Graphics& g)
     drawWrapped(g, text.body, in, body);
 }
 
+// A track's tab chip lights for 150 ms when it is played. With Follow
+// Played Track, a track page gives way to the track played last, as the
+// Digitakt's display follows the track triggered: not from the mixer or the
+// FX page, and at most four times a second, so a pattern does not flicker.
+void CyclesEmuEditor::updateTrigLights()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    for (int t = 0; t < proc.trackPages(); ++t)
+    {
+        const uint32_t n = proc.trigCount(t);
+        if (n != seenTrigs[t])
+            seenTrigs[t] = n, litUntil[t] = now + 150.0;
+        const bool lit = now < litUntil[t];
+        if ((bool)tabs[t]->getProperties()["lit"] != lit)
+        {
+            tabs[t]->getProperties().set("lit", lit);
+            tabs[t]->repaint();
+        }
+    }
+    // follow a track played just now (lit), from a track page only
+    const int last = proc.lastTriggered();
+    if (follow && proc.trackPages() > 1 && current < proc.trackPages() && last >= 0 && last != current
+        && now < litUntil[last] && now - lastFollow >= 250.0)
+    {
+        showPage(last);
+        lastFollow = now;
+    }
+}
+
 void CyclesEmuEditor::timerCallback()
 {
+    updateTrigLights();
     if (helpMode)
     {
         status.setText("Help: hover over a control. Click ? again to leave.", juce::dontSendNotification);
