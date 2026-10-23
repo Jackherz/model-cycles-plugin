@@ -164,7 +164,7 @@ class Reverb {
   }
   
  private:
-  typedef FxEngine<32768, FORMAT_16_BIT> E;
+  typedef FxEngine<32768, FORMAT_32_BIT> E;   // CyclesEmu: float, not 16-bit storage (the tail grained)
   E engine_;
   
   float amount_;
@@ -176,7 +176,7 @@ class Reverb {
   float lp_decay_1_;
   float lp_decay_2_;
   
-  uint16_t  buffer_[32768];
+  E::T      buffer_[32768];   // CyclesEmu: was uint16_t (see E)
   float freeze_;
 };
 

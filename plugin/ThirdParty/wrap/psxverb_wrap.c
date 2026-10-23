@@ -12,7 +12,7 @@ static audio_fx_api_v2_t *api;
 static void *create(void) { return api->create_instance(NULL, "{}"); }
 static void destroy(void *p) { api->destroy_instance(p); }
 static void set(void *p, const char *k, const char *v) { api->set_param(p, k, v); }
-static void process(void *p, int16_t *io, int frames) { api->process_block(p, io, frames); }
+static void process(void *p, float *io, int frames) { cyem_process_float(p, io, frames); }
 
 const cyem_fx *cyem_fx_psxverb(void)
 {

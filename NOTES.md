@@ -1562,6 +1562,77 @@ good open-source ones such as the Schwung catalogue's), with a switch.
   - HostTest: 6.5 % (174 us a 128-sample callback), below the 6.7 % before
     step 37.
 
+## Step 38: SP TWINSHOT, the Syntakt's sample machine (2026-10-23)
+
+Jack: port the Syntakt's SP TWINSHOT, with his own WAV folder ("Twin Shot
+Sound Pack" in the project root, git-ignored). Same knob layout as the other
+machines, on two pages.
+- **Firmware**: a sixth Syntakt engine in Modded-Cycles' generator.
+  - `re/modded-cycles/tools/gen_syntakt_engines.py` gains a CATALOG entry
+    `twin`: engine 11, update `0x400097dc`, render `0x40009a8a`.
+  - The 64-slot sample table `0x4404f754` (u32 length, u32 pointer; 16-bit
+    big-endian data) moves with the BSS window to `0x43030754`.
+  - Six Syntakt voices don't fit in SRAM. With `CYEM_VOICES_IN_REPLICA=1`,
+    the sixth goes in its replica.
+  - `bridge_engines.c`, engine 11: Tune 2 is clamped to 40..88. Sample 2
+    and Overdrive come from the bridge's own `s16 cyem_twin[6][2]` (the
+    generator prints its address, `0x4303207e`).
+    - They have no Cycles knob, and kit words without a descriptor are slid
+      back to 0 by the firmware smoother, so k23/k24 could not carry them.
+  - Build: tweak `syntakt-sd-cp-toy-bits-swarm-twin` plus `track-filter`,
+    giving `data-sttw/model-cycles_OS1.13_syntakt7_filter.syx`. Then the
+    pipeline, and `aot/build-sttw` translated with the same six hooks.
+  - Replay on `data-sttw/cap-driven`: 200/200 bit-exact.
+- **Pipeline fix**: `coverage.json` accumulates across runs. Blocks from the
+  previous build overlapped the new layout and stopped `translate.py`
+  ("overlapping instructions"). `firmware_pipeline.sh` now deletes it first.
+- **Machine change snaps**: the machine word is smoothed like any other. A
+  change slid through the machines in between, so the plugin (and the
+  harness) snap it with `mc_engine_snap_param`.
+- **Plugin**:
+  - `TwinSamples`: loads the folder (natural sort, up to 64, mono, resampled
+    to 48 kHz with a windowed sinc), cached per process. It writes the data
+    at `0x50000000` and the table, installed on the audio thread.
+  - The folder is in the settings, set from Kit > "Twinshot Samples Folder…".
+  - Machine 11 "SP Twinshot". Its knobs: Smp 1, Flt 1, Mix, Tune 2. Page 2
+    holds Smp 2 and Drive (`twsamp2`, `twdrive`, written with
+    `mc_engine_twin_param`).
+  - Sample 1 and 2 show the sample's name, with "<" when reversed (knob
+    below 64).
+- **Check**: `scripts/twinshot_compare.py` against the Syntakt's own engine
+  (digiemu's `stengine`, Unicorn). Results:
+  - Correlation ≥ 0.9999 at lag 0 for mix 0, 64 and 127, forward and
+    reversed.
+  - Level ×0.55 throughout: the Cycles' own output gain.
+
+## Step 39: fizzy CHOMPI, PSX and Tape effects (2026-10-23)
+
+Jack: CHOMPI's delay and reverb, PSX and Tape sound fizzy; the others are
+fine. Each engine was measured alone (a decaying 440 Hz tone, then a held
+one), then in the plugin, as the wet signal: EditorShot "fx engines" with
+`FX_WET_DIR` writing it out.
+- **PSX**: the 2× resampler was wrong.
+  - Its 39 taps weren't the SPU's: every side tap was negative, a DC gain
+    of −0.58.
+  - The interpolator left every other output sample at 0, mirroring the
+    reverb about 24 kHz as loud as itself (−3 dB).
+  - Fixed: psx-spx's FIR table, and a polyphase interpolator (the even taps
+    on one phase, the centre tap on the other). The image is now −60 dB.
+  - The reverb came out 15 dB louder. Its input is padded −6 dB so its
+    16-bit work RAM doesn't clip on a hot send, and its trim is 0.4175.
+  - Work RAM writes now round instead of truncating.
+- **CHOMPI**: the Clouds / Rings reverb (CHOMPI's reverb, and its delay's
+  Wand-up side) kept its memory in 16 bits. The grain grew as the tail
+  faded (high band −58 dB at a loud input, −30 dB at a quiet one). Now in
+  float (`FORMAT_32_BIT`), and the same at any level.
+- **Tape, CloudSeed, PSX**: driven through Schwung's 16-bit v2 block, which
+  truncates its output. Decaying tails ground into a flat noise floor above
+  12 kHz (Tape −67 dB, PSX −61, CloudSeed −75).
+  - Each module now has a float copy of its block, `cyem_process_float`.
+  - Tape now rolls off like the Cycles' delay: −86 dB at the top.
+- Levels are unchanged: within 0.3 dB of the Cycles' at the same settings.
+- Not changed: the Cycles' own delay and reverb.
+
 ## Next steps
 
 

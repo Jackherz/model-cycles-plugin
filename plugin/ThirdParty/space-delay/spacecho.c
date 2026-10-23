@@ -421,6 +421,72 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
     }
 }
 
+/* CyclesEmu: the same block on float samples (-1..1), no 16-bit step on
+ * the way in or out (the truncation ground the tails into fizz) */
+static void cyem_process_float(void *instance, float *audio_inout, int frames) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst || !inst->initialized) return;
+
+    /* Track samples for MIDI clock BPM detection */
+    inst->clock_sample_counter += frames;
+
+    for (int i = 0; i < frames; i++) {
+        /* Get smoothed parameter values */
+        float delayTime = SmoothedValue_GetNext(&inst->smoothedDelayTime);
+        float feedback = SmoothedValue_GetNext(&inst->smoothedFeedback);
+        float mix = SmoothedValue_GetNext(&inst->smoothedMix);
+        float stereoWidth = SmoothedValue_GetNext(&inst->smoothedStereoWidth);
+
+        /* In */
+        float inL = audio_inout[i * 2];
+        float inR = audio_inout[i * 2 + 1];
+
+        /* Read from delay lines */
+        float delayedL = DelayLine_Read(&inst->delayLine[0], delayTime);
+        float delayedR = DelayLine_Read(&inst->delayLine[1], delayTime);
+
+        /* Apply tone filter to delayed signal */
+        delayedL = OnePoleFilter_Process(&inst->toneFilter[0], delayedL);
+        delayedR = OnePoleFilter_Process(&inst->toneFilter[1], delayedR);
+
+        /*
+         * Width-dependent ping-pong input routing:
+         * - width=0.0: original crossfeed behavior (preserves previous mono-width level)
+         * - width=1.0: mono-seeded ping-pong (centered mono input still alternates L/R)
+         */
+        float monoInput = 0.5f * (inL + inR);
+        float pingInputL = inR * (1.0f - stereoWidth);
+        float pingInputR = inL * (1.0f - stereoWidth) + monoInput * stereoWidth;
+        DelayLine_Write(&inst->delayLine[0], pingInputL + delayedR * feedback);
+        DelayLine_Write(&inst->delayLine[1], pingInputR + delayedL * feedback);
+
+        /* Stereo width on wet path: 0 = mono, 1 = full L/R */
+        float wetMono = 0.5f * (delayedL + delayedR);
+        float wetL = wetMono + (delayedL - wetMono) * stereoWidth;
+        float wetR = wetMono + (delayedR - wetMono) * stereoWidth;
+
+        /* Keep perceived wet level more stable while widening. */
+        float widthLevelComp = 1.0f / sqrtf(1.0f - 0.5f * stereoWidth);
+        if (widthLevelComp > 1.333333f) widthLevelComp = 1.333333f;
+        wetL *= widthLevelComp;
+        wetR *= widthLevelComp;
+
+        /* Mix dry/wet */
+        float outL = inL * (1.0f - mix) + wetL * mix;
+        float outR = inR * (1.0f - mix) + wetR * mix;
+
+        /* Soft clip output */
+        if (outL > 1.0f) outL = 1.0f;
+        if (outL < -1.0f) outL = -1.0f;
+        if (outR > 1.0f) outR = 1.0f;
+        if (outR < -1.0f) outR = -1.0f;
+
+        /* Out */
+        audio_inout[i * 2] = outL;
+        audio_inout[i * 2 + 1] = outR;
+    }
+}
+
 
 /* Apply synced delay time if division is active */
 static void apply_synced_time(spacecho_instance_t *inst) {

@@ -23,7 +23,10 @@ namespace
 // level against the firmware's own at the same settings (EditorShot "fx
 // engines": CHOMPI -12.1 dB, Tape -8.4, CloudSeed +9.2, CHOMPI's reverb
 // +5.7, PSX -1.6 untrimmed)
-const float kTrim[2][4] = {{1.0f, 4.03f, 2.63f, 0.0f}, {1.0f, 0.347f, 0.519f, 1.20f}};
+const float kTrim[2][4] = {{1.0f, 4.03f, 2.63f, 0.0f}, {1.0f, 0.347f, 0.519f, 0.4175f}};
+// into the effects: PSX has 15 dB of gain inside, and its 16-bit work RAM
+// would clip on a hot send
+const float kPad[2][4] = {{1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 0.5f}};
 
 const cyem_fx* v2For(int which, int type)
 {
@@ -131,12 +134,10 @@ void FxEngines::run(int which, int type, const FxKnobs& k, const float* in, cons
             if (first || k.reverbx != was.reverbx)
                 setf(fx, e, "reverb_level", k.reverbx / 127.0);
         }
-        int16_t io[64];
+        const float pad = kPad[which][type];
         for (int i = 0; i < 64; ++i)
-            io[i] = (int16_t)juce::jlimit(-32768, 32767, (int)std::lrint(in[i] * 32768.0f));
-        fx->process(e, io, 32);
-        for (int i = 0; i < 64; ++i)
-            out[i] = io[i] * (1.0f / 32768.0f);
+            out[i] = in[i] * pad;
+        fx->process(e, out, 32);
     }
     was = k;
     const float trim = kTrim[which][type];

@@ -2,7 +2,8 @@
  * this folder (each with its own MIT licence and SOURCE.txt). Each module's
  * source is included unchanged into its own wrapper, its one exported entry
  * point renamed, and driven through its own API: CloudSeed, PSX Verb and
- * Space Echo through Schwung's v2 effect API (16-bit interleaved stereo);
+ * Space Echo through Schwung's v2 effect API (its parameters), their blocks
+ * on float samples (each module's v2 block, copied without the 16-bit step);
  * CHOMPI TEMPO's dual delay and its reverb on their float path. All run at
  * 48 kHz. */
 #pragma once
@@ -16,7 +17,7 @@ typedef struct cyem_fx {
     void *(*create)(void);
     void (*destroy)(void *);
     void (*set)(void *, const char *key, const char *val);
-    void (*process)(void *, int16_t *interleaved, int frames);   /* in place */
+    void (*process)(void *, float *interleaved, int frames);   /* in place, -1..1 */
 } cyem_fx;
 
 const cyem_fx *cyem_fx_cloudseed(void);

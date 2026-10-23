@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <stdint.h>
 
 #include "audio_fx_api_v1.h"
@@ -54,61 +55,46 @@ typedef audio_fx_api_v2_t* (*audio_fx_init_v2_fn)(const host_api_v1_t *host);
 #define HB_STATE_MASK 63  /* 0x3F for fast wrap */
 
 /* Halfband FIR coefficients - EXACT from reference Halfband39.h */
-static const float g_hb_coeffs[HB_TAPS] = {
-    -0.000275135f,  /* 0 */
-     0.0f,          /* 1 */
-    -0.001467466f,  /* 2 */
-     0.0f,          /* 3 */
-    -0.004356503f,  /* 4 */
-     0.0f,          /* 5 */
-    -0.009765625f,  /* 6 */
-     0.0f,          /* 7 */
-    -0.018493652f,  /* 8 */
-     0.0f,          /* 9 */
-    -0.031494141f,  /* 10 */
-     0.0f,          /* 11 */
-    -0.050598145f,  /* 12 */
-     0.0f,          /* 13 */
-    -0.079833984f,  /* 14 */
-     0.0f,          /* 15 */
-    -0.130859375f,  /* 16 */
-     0.0f,          /* 17 */
-    -0.281494141f,  /* 18 */
-     0.632812500f,  /* 19 - CENTER TAP */
-    -0.281494141f,  /* 20 */
-     0.0f,          /* 21 */
-    -0.130859375f,  /* 22 */
-     0.0f,          /* 23 */
-    -0.079833984f,  /* 24 */
-     0.0f,          /* 25 */
-    -0.050598145f,  /* 26 */
-     0.0f,          /* 27 */
-    -0.031494141f,  /* 28 */
-     0.0f,          /* 29 */
-    -0.018493652f,  /* 30 */
-     0.0f,          /* 31 */
-    -0.009765625f,  /* 32 */
-     0.0f,          /* 33 */
-    -0.004356503f,  /* 34 */
-     0.0f,          /* 35 */
-    -0.001467466f,  /* 36 */
-     0.0f,          /* 37 */
-    -0.000275135f,  /* 38 */
-};
-
-/* Polyphase Phase 0: coeffs at even indices [0, 2, 4, ..., 38] */
-static const float g_hb_phase0[20] = {
-    -0.000275135f, -0.001467466f, -0.004356503f, -0.009765625f,
-    -0.018493652f, -0.031494141f, -0.050598145f, -0.079833984f,
-    -0.130859375f, -0.281494141f,  0.632812500f, -0.281494141f,
-    -0.130859375f, -0.079833984f, -0.050598145f, -0.031494141f,
-    -0.018493652f, -0.009765625f, -0.004356503f, -0.001467466f
-};
-
-/* Polyphase Phase 1: coeffs at odd indices (all zeros for halfband) */
-static const float g_hb_phase1[19] = {
-    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+static const float g_hb_coeffs[HB_TAPS] = {  /* CyclesEmu: the SPU's own FIR (psx-spx), /0x8000 */
+    -0.000030518f,  /* 0 */
+    0.000000000f,  /* 1 */
+    0.000061035f,  /* 2 */
+    0.000000000f,  /* 3 */
+    -0.000305176f,  /* 4 */
+    0.000000000f,  /* 5 */
+    0.001068115f,  /* 6 */
+    0.000000000f,  /* 7 */
+    -0.003143311f,  /* 8 */
+    0.000000000f,  /* 9 */
+    0.008117676f,  /* 10 */
+    0.000000000f,  /* 11 */
+    -0.018798828f,  /* 12 */
+    0.000000000f,  /* 13 */
+    0.040649414f,  /* 14 */
+    0.000000000f,  /* 15 */
+    -0.090332031f,  /* 16 */
+    0.000000000f,  /* 17 */
+    0.312683105f,  /* 18 */
+    0.500000000f,  /* 19 */
+    0.312683105f,  /* 20 */
+    0.000000000f,  /* 21 */
+    -0.090332031f,  /* 22 */
+    0.000000000f,  /* 23 */
+    0.040649414f,  /* 24 */
+    0.000000000f,  /* 25 */
+    -0.018798828f,  /* 26 */
+    0.000000000f,  /* 27 */
+    0.008117676f,  /* 28 */
+    0.000000000f,  /* 29 */
+    -0.003143311f,  /* 30 */
+    0.000000000f,  /* 31 */
+    0.001068115f,  /* 32 */
+    0.000000000f,  /* 33 */
+    -0.000305176f,  /* 34 */
+    0.000000000f,  /* 35 */
+    0.000061035f,  /* 36 */
+    0.000000000f,  /* 37 */
+    -0.000030518f,  /* 38 */
 };
 
 typedef struct {
@@ -143,31 +129,20 @@ static float halfband_decimate(halfband_t *hb, float x0, float x1) {
 /* Interpolate: 22.05kHz -> 44.1kHz (1 sample in, 2 out)
  * Exact port from Halfband39::Interpolate */
 static void halfband_interpolate(halfband_t *hb, float in_tick, float *out_s0, float *out_s1) {
-    /* Push upsampled input (zero-stuff: [in, 0]) */
+    /* CyclesEmu: the zero-stuffed stream [in, 0] through the 39 taps. The
+     * phase on the real samples takes the even taps; the other only the
+     * centre tap (the halfband's odd taps are 0). The original dropped that
+     * phase (out_s1 always 0) and its taps had the wrong signs. */
     hb->state[hb->pos] = in_tick;
     hb->pos = (hb->pos + 1) & HB_STATE_MASK;
-
-    /* Phase 0: even coefficients (produces sample 0) */
     float sum0 = 0.0f;
     int idx = hb->pos;
-    for (int i = 0; i < 20; ++i) {  /* 20 even taps */
+    for (int j = 0; j < 20; ++j) {
         idx = (idx - 1) & HB_STATE_MASK;
-        sum0 += g_hb_phase0[i] * hb->state[idx];
+        sum0 += g_hb_coeffs[2 * j] * hb->state[idx];
     }
-
-    /* Phase 1: odd coefficients (produces sample 1) */
-    hb->state[hb->pos] = 0.0f;  /* zero-stuffed sample */
-    hb->pos = (hb->pos + 1) & HB_STATE_MASK;
-
-    float sum1 = 0.0f;
-    idx = hb->pos;
-    for (int i = 0; i < 19; ++i) {  /* 19 odd taps */
-        idx = (idx - 1) & HB_STATE_MASK;
-        sum1 += g_hb_phase1[i] * hb->state[idx];
-    }
-
-    *out_s0 = sum0 * 2.0f;  /* Compensate for zero-stuffing */
-    *out_s1 = sum1 * 2.0f;
+    *out_s0 = sum0 * 2.0f;  /* compensate for zero-stuffing */
+    *out_s1 = hb->state[(hb->pos - 10) & HB_STATE_MASK] * (2.0f * g_hb_coeffs[19]);
 }
 
 /* ============================================================================
@@ -198,7 +173,7 @@ static inline float workarea_read_relative(const workarea_t *wa, int32_t offset)
 /* Write at relative offset from current base with 16-bit saturation
  * Exact port from WorkArea::WriteRelative */
 static inline void workarea_write_relative(workarea_t *wa, int32_t offset, float value) {
-    int32_t val_int = (int32_t)(value * kFloatToInt16);
+    int32_t val_int = (int32_t)lrintf(value * kFloatToInt16);   /* CyclesEmu: rounded, not truncated */
     /* Saturate to int16 range [-32768, 32767] */
     if (val_int > 32767) val_int = 32767;
     if (val_int < -32768) val_int = -32768;
@@ -738,6 +713,101 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         audio_inout[i * 2 + 1] = (int16_t)(final_r0 * 32767.0f);
         audio_inout[(i + 1) * 2] = (int16_t)(final_l1 * 32767.0f);
         audio_inout[(i + 1) * 2 + 1] = (int16_t)(final_r1 * 32767.0f);
+    }
+}
+
+/* CyclesEmu: the same block on float samples (-1..1), no 16-bit step on
+ * the way in or out (the truncation ground the tails into fizz) */
+static void cyem_process_float(void *instance, float *audio_inout, int frames) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)instance;
+    if (!inst) return;
+
+    const scaled_preset_t *p = &inst->current;
+
+    for (int i = 0; i < frames; i += 2) {
+        if (i + 1 >= frames) break;
+
+        float in_l0 = audio_inout[i * 2];
+        float in_r0 = audio_inout[i * 2 + 1];
+        float in_l1 = audio_inout[(i + 1) * 2];
+        float in_r1 = audio_inout[(i + 1) * 2 + 1];
+
+        float Lin = halfband_decimate(&inst->down_l, in_l0, in_l1) * p->vLIN_f;
+        float Rin = halfband_decimate(&inst->down_r, in_r0, in_r1) * p->vRIN_f;
+
+        /* Same-side reflection */
+        float lsame_fb = workarea_read_relative(&inst->work, p->dLSAME);
+        float lsame_iir = workarea_read_relative(&inst->work, p->mLSAME - 1);
+        float lsame_out = (Lin + lsame_fb * p->vWALL_f - lsame_iir) * p->vIIR_f + lsame_iir;
+        workarea_write_relative(&inst->work, p->mLSAME, lsame_out);
+
+        float rsame_fb = workarea_read_relative(&inst->work, p->dRSAME);
+        float rsame_iir = workarea_read_relative(&inst->work, p->mRSAME - 1);
+        float rsame_out = (Rin + rsame_fb * p->vWALL_f - rsame_iir) * p->vIIR_f + rsame_iir;
+        workarea_write_relative(&inst->work, p->mRSAME, rsame_out);
+
+        /* Different-side reflection */
+        float ldiff_fb = workarea_read_relative(&inst->work, p->dRDIFF);
+        float ldiff_iir = workarea_read_relative(&inst->work, p->mLDIFF - 1);
+        float ldiff_out = (Lin + ldiff_fb * p->vWALL_f - ldiff_iir) * p->vIIR_f + ldiff_iir;
+        workarea_write_relative(&inst->work, p->mLDIFF, ldiff_out);
+
+        float rdiff_fb = workarea_read_relative(&inst->work, p->dLDIFF);
+        float rdiff_iir = workarea_read_relative(&inst->work, p->mRDIFF - 1);
+        float rdiff_out = (Rin + rdiff_fb * p->vWALL_f - rdiff_iir) * p->vIIR_f + rdiff_iir;
+        workarea_write_relative(&inst->work, p->mRDIFF, rdiff_out);
+
+        /* Comb filter bank */
+        float Lout = p->vCOMB1_f * workarea_read_relative(&inst->work, p->mLCOMB1) +
+                     p->vCOMB2_f * workarea_read_relative(&inst->work, p->mLCOMB2) +
+                     p->vCOMB3_f * workarea_read_relative(&inst->work, p->mLCOMB3) +
+                     p->vCOMB4_f * workarea_read_relative(&inst->work, p->mLCOMB4);
+
+        float Rout = p->vCOMB1_f * workarea_read_relative(&inst->work, p->mRCOMB1) +
+                     p->vCOMB2_f * workarea_read_relative(&inst->work, p->mRCOMB2) +
+                     p->vCOMB3_f * workarea_read_relative(&inst->work, p->mRCOMB3) +
+                     p->vCOMB4_f * workarea_read_relative(&inst->work, p->mRCOMB4);
+
+        /* All-pass filter 1 */
+        float lapf1_del = workarea_read_relative(&inst->work, p->mLAPF1 - p->dAPF1);
+        Lout -= p->vAPF1_f * lapf1_del;
+        workarea_write_relative(&inst->work, p->mLAPF1, Lout);
+        Lout = Lout * p->vAPF1_f + lapf1_del;
+
+        float rapf1_del = workarea_read_relative(&inst->work, p->mRAPF1 - p->dAPF1);
+        Rout -= p->vAPF1_f * rapf1_del;
+        workarea_write_relative(&inst->work, p->mRAPF1, Rout);
+        Rout = Rout * p->vAPF1_f + rapf1_del;
+
+        /* All-pass filter 2 */
+        float lapf2_del = workarea_read_relative(&inst->work, p->mLAPF2 - p->dAPF2);
+        Lout -= p->vAPF2_f * lapf2_del;
+        workarea_write_relative(&inst->work, p->mLAPF2, Lout);
+        Lout = Lout * p->vAPF2_f + lapf2_del;
+
+        float rapf2_del = workarea_read_relative(&inst->work, p->mRAPF2 - p->dAPF2);
+        Rout -= p->vAPF2_f * rapf2_del;
+        workarea_write_relative(&inst->work, p->mRAPF2, Rout);
+        Rout = Rout * p->vAPF2_f + rapf2_del;
+
+        workarea_advance(&inst->work, 1);
+
+        float out_l0, out_l1, out_r0, out_r1;
+        halfband_interpolate(&inst->up_l, Lout * p->vLOUT_f, &out_l0, &out_l1);
+        halfband_interpolate(&inst->up_r, Rout * p->vROUT_f, &out_r0, &out_r1);
+
+        float dry_mix = 1.0f - inst->mix;
+        float wet_mix = inst->mix;
+
+        float final_l0 = clamp_f(in_l0 * dry_mix + out_l0 * wet_mix, -1.0f, 1.0f);
+        float final_r0 = clamp_f(in_r0 * dry_mix + out_r0 * wet_mix, -1.0f, 1.0f);
+        float final_l1 = clamp_f(in_l1 * dry_mix + out_l1 * wet_mix, -1.0f, 1.0f);
+        float final_r1 = clamp_f(in_r1 * dry_mix + out_r1 * wet_mix, -1.0f, 1.0f);
+
+        audio_inout[i * 2] = final_l0;
+        audio_inout[i * 2 + 1] = final_r0;
+        audio_inout[(i + 1) * 2] = final_l1;
+        audio_inout[(i + 1) * 2 + 1] = final_r1;
     }
 }
 

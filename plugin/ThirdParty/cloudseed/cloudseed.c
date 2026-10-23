@@ -1458,6 +1458,52 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
     }
 }
 
+/* CyclesEmu: the same block on float samples (-1..1), no 16-bit step on
+ * the way in or out (the truncation ground the tails into fizz) */
+static void cyem_process_float(void *instance, float *audio_inout, int frames) {
+    cloudseed_instance_t *inst = (cloudseed_instance_t*)instance;
+    if (!inst || !inst->channel_l || !inst->channel_r) return;
+
+    /* Process in chunks of BUFFER_SIZE */
+    int offset = 0;
+    while (offset < frames) {
+        int chunk = frames - offset;
+        if (chunk > BUFFER_SIZE) chunk = BUFFER_SIZE;
+
+        float in_l[BUFFER_SIZE];
+        float in_r[BUFFER_SIZE];
+        float out_l[BUFFER_SIZE];
+        float out_r[BUFFER_SIZE];
+
+        /* In */
+        for (int i = 0; i < chunk; i++) {
+            in_l[i] = audio_inout[(offset + i) * 2];
+            in_r[i] = audio_inout[(offset + i) * 2 + 1];
+        }
+
+        /* Process through reverb channels */
+        channel_process(inst->channel_l, in_l, out_l, chunk);
+        channel_process(inst->channel_r, in_r, out_r, chunk);
+
+        /* Mix dry and wet, out */
+        for (int i = 0; i < chunk; i++) {
+            float mixed_l = in_l[i] * (1.0f - inst->mix) + out_l[i] * inst->mix;
+            float mixed_r = in_r[i] * (1.0f - inst->mix) + out_r[i] * inst->mix;
+
+            /* Soft clipping */
+            if (mixed_l > 1.0f) mixed_l = 1.0f;
+            if (mixed_l < -1.0f) mixed_l = -1.0f;
+            if (mixed_r > 1.0f) mixed_r = 1.0f;
+            if (mixed_r < -1.0f) mixed_r = -1.0f;
+
+            audio_inout[(offset + i) * 2] = mixed_l;
+            audio_inout[(offset + i) * 2 + 1] = mixed_r;
+        }
+
+        offset += chunk;
+    }
+}
+
 /* Helper to extract a JSON number value by key */
 static int json_get_number(const char *json, const char *key, float *out) {
     char search[64];

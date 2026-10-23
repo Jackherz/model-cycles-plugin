@@ -1,6 +1,7 @@
 /* CHOMPI TEMPO's dual delay and reverb: see fxwrap.h. The port's source is
- * included unchanged; its knob mappings (set_main, set_feedback, set_mix),
- * its per-sample engine (process48) and its loader are used as they are.
+ * included unchanged (but for its reverb's float memory: ../README.md);
+ * its knob mappings (set_main, set_feedback, set_mix), its per-sample engine
+ * (process48) and its loader are used as they are.
  * Only the clock is CyclesEmu's: TEMPO's 24 pulses a beat run free at the
  * engine's tempo, at 48 kHz (the port's run_clock assumes Move's 44.1). */
 #define move_audio_fx_init_v2 cyem_munchi_init_v2
