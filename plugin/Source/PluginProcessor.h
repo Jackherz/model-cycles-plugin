@@ -23,10 +23,11 @@ enum class Kind
     LfoSync,
     LfoDest,    // index into kLfoDestValues
     Solo,       // the mixer's solo (the plugin's, not the firmware's)
+    Glide,      // legato and portamento: the plugin's, read at each note
 };
 
 // How the editor and the host show its value.
-enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff, NoteLength };   // NoteLength: 32 = a beat
+enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff, NoteLength, GlideTime };   // NoteLength: 32 = a beat
 
 struct ParamDef
 {
@@ -53,6 +54,9 @@ juce::String paramId(int track, const char* id);   // "t1_decay", "fx_delaytime"
 // Musical values a knob snaps to while turned (bare parameter id), empty for
 // none: the delay time's note lengths, the LFO speed's even rates.
 const std::vector<int>& snapPoints(const juce::String& bareId);
+
+// The portamento time (0-127) in milliseconds: 1 ms to 10 s, exponential.
+double glideMs(int v);
 } // namespace cyclesemu
 
 // Which plugin a build is: CyclesEmu (six tracks, as the hardware),
@@ -115,6 +119,8 @@ public:
     const juce::ValueTree& newKit() const { return initKit; }
     // for tests: what the engine holds (a sound word, or -1 level, -2 mute)
     int peek(uint32_t addr) const { return mc_engine_peek(engine, addr); }
+    void setSmoothFilter(bool on) { mc_engine_set_smooth_filter(engine, on); }
+    void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }
     uint32_t kitAddress() const { return mc_engine_kit(engine); }
     int engineValue(int track, int offset) const
     {
@@ -169,6 +175,34 @@ private:
     void fxProcess(juce::AudioBuffer<float>&);
     void fxEngineBlock(const float* inL, const float* inR, float* outL, float* outR);
     void voiceNote(int note, int velocity, bool on);
+    // Legato and portamento, after the Syntakt's (NOTES.md step 28): the
+    // engine plays the note it was triggered with, and the glide moves the
+    // track's pitch word from there, in 1/256 semitones, every engine block.
+    struct GlideSettings
+    {
+        bool port, legato, constTime, glissando, legatoOnly, gating;
+        int priority;   // 0 last, 1 low, 2 high
+        double ms, amount;
+    };
+    struct Glide
+    {
+        int trig = -1;           // the note the engine was last triggered with, -1 none yet
+        int velocity = 100;
+        double cur = 0, target = 0, step = 0;   // the pitch now and where it goes (notes), per block
+        bool frozen = false, glissando = false;
+        int held[16] = {}, numHeld = 0;   // keys down, oldest first (legato)
+        int userPitch = 64, sentWord = 64 << 8;
+    } glides[cyclesemu::kTracks];
+    static constexpr int kGlideParams = 9;
+    std::atomic<float>* glideRaw[cyclesemu::kTracks][kGlideParams] = {};
+    int lastVoice = -1;   // CyclesVoice: the voice that played last, where a glide starts
+    GlideSettings glideSettings(int page) const;
+    void trackNote(int track, int note, int velocity, bool on);
+    void startNote(int track, int note, int velocity, bool glide, double from, const GlideSettings&);
+    void legatoTo(int track, int note, const GlideSettings&);
+    void beginGlide(Glide&, double from, const GlideSettings&);
+    void writePitch(int track, bool force = false);
+    void updateGlides();
     void applyAll(const cyclesemu::ParamDef&, int track, int v);   // to every track in Voice
     // Mute and Solo as on a mixer: the firmware's mute only stops sequencer
     // trigs, so a track that should be silent (muted, or soloed out) has its

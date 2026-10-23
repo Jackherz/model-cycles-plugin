@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "runtime.h"
 #include "engine.h"
 
@@ -40,6 +41,15 @@ struct mc_engine {
     /* CyclesFX: the next block's input and how much of it each send gets */
     const float *in_l, *in_r;
     float in_delay, in_reverb;
+    /* the smooth track filter (below), when on */
+    int smooth_filter;
+    struct tf_state {
+        double ic1, ic2;             /* the SVF's integrators */
+        double g, k, w;              /* coefficients and wet share where the last block ended */
+        double env;                  /* the envelope, 1 at a note */
+        int16_t c, r, a, d;          /* this block's smoothed words */
+        int on, lp, trig;
+    } tf[6];
 };
 
 /* The mixer (0x400567ba) sums the tracks' delay sends into an interleaved
@@ -68,14 +78,132 @@ static void fx_hook(mc_ctx *x, uint32_t pc)
         }
 }
 
+/* The track filter (Modded-Cycles' track-filter, NOTES.md step 17) works
+ * a block at a time: its coefficients change every 32 frames, so a fast LFO
+ * on the cutoff steps audibly (zipper clicks), and a cutoff swept across the
+ * centre flips the filter between low- and high-pass. With the smooth filter
+ * on, a hook before its loop over the tracks (in tf_post, after it stores
+ * the block's trigs) shows it every cutoff at the centre, where it leaves
+ * the track alone, and one after the loop puts the cutoffs back and runs the
+ * same filter here: the same laws (gen_track_filter.py), its coefficients
+ * ramped sample by sample from one block's to the next, the side (LP or HP)
+ * the knob's, with modulation opening or closing it within that side, and,
+ * with the knob at OFF, a change of side made through the dry signal. */
+#define TF_HOOK_BEFORE 0x4014ab9cu
+#define TF_HOOK_AFTER  0x4014abe2u
+#define TF_TRIG        0x40160ee4u
+#define TRACK_BUFS     0x80001858u
+#define SMOOTHED       0x8000100cu       /* + 14 + 66 t + 2 k */
+
+static double tf_cutoff_hz(double i) { double f = 5.0 * pow(4400.0, i / 16384.0); return f < 20000.0 ? f : 20000.0; }
+
+static void tf_before(mc_engine *g)
+{
+    const uint32_t trig = mc_ld32(g->x, TF_TRIG);
+    for (int t = 0; t < 6; t++) {
+        struct tf_state *f = &g->tf[t];
+        const uint32_t w = SMOOTHED + 14 + 66 * t + 2 * 28;
+        f->c = (int16_t)mc_ld16(g->x, w);
+        f->r = (int16_t)mc_ld16(g->x, w + 2);
+        f->a = (int16_t)mc_ld16(g->x, w + 4);
+        f->d = (int16_t)mc_ld16(g->x, w + 6);
+        f->trig = (trig >> t) & 1;
+        mc_st16_raw(g->x, w, 0x4000);
+    }
+}
+
+static void tf_after(mc_engine *g)
+{
+    for (int t = 0; t < 6; t++) {
+        struct tf_state *f = &g->tf[t];
+        const uint32_t w = SMOOTHED + 14 + 66 * t + 2 * 28;
+        mc_st16_raw(g->x, w, (uint16_t)f->c);
+        /* the envelope, as the firmware's: restarted by a note, else decaying */
+        if (f->trig)
+            f->env = 1.0;
+        else if (f->env > 0.0) {
+            const double tau = 0.005 * pow(2000.0, (f->d < 0 ? 0 : f->d) / 32512.0);
+            f->env *= exp(-1.0 / (1500.0 * tau));
+            if (f->env < 0x10000 / 2147483648.0)
+                f->env = 0.0;
+        }
+        const int knob = (int16_t)mc_ld16(g->x, g->kit + 0x1c + 100 * t + 0x4c) - 0x4000, now = f->c - 0x4000;
+        if (knob == 0 && now == 0 && (!f->on || f->w == 0.0)) {
+            f->on = 0;                   /* OFF: the track as it is */
+            continue;
+        }
+        int lp = knob ? knob < 0 : now ? now < 0 : f->lp;
+        double wt = knob ? 1.0 : fmin(1.0, abs(now) / 256.0);
+        if (f->on && lp != f->lp) {
+            lp = f->lp;                  /* finish on the old side, through the dry signal */
+            wt = 0.0;
+        }
+        double idx = (lp ? f->c : now) + (f->a - 0x4000) * f->env;
+        idx = idx < 0 ? 0 : idx > 0x3fff ? 0x3fff : idx;
+        const double fc = tf_cutoff_hz(idx);
+        const double scale = (1 - pow(fc / 24000.0, 2.5)) * fmin(fmax((fc - 10.0) / 20.0, 0.0), 1.0);
+        const double gt = tan(3.14159265358979323846 * fc / 48000.0);
+        const double kt = 1.0 / (0.5 * pow(100.0, (f->r < 0 ? 0 : f->r) * scale / 32512.0));
+        uint8_t *buf = g->x->mem + TRACK_BUFS + 128 * t;
+        const double norm = 1.0 / 2147483648.0;
+        if (!f->on) {                    /* from rest: LP holds the input's level, HP starts at 0 */
+            f->on = 1;
+            f->ic1 = 0.0;
+            f->ic2 = lp ? (int32_t)mc_ld32m(buf, 0) * norm : 0.0;
+            f->g = gt, f->k = kt, f->w = wt;
+        }
+        f->lp = lp;
+        const double dg = (gt - f->g) / 32, dk = (kt - f->k) / 32, dw = (wt - f->w) / 32;
+        double gg = f->g, kk = f->k, ww = f->w, ic1 = f->ic1, ic2 = f->ic2;
+        for (int i = 0; i < 32; i++) {
+            gg += dg, kk += dk, ww += dw;
+            const double x = (int32_t)mc_ld32m(buf, 4 * i) * norm;
+            const double a1 = 1.0 / (1.0 + gg * (gg + kk)), a2 = gg * a1, a3 = gg * a2;
+            const double v3 = x - ic2, v1 = a1 * ic1 + a2 * v3, v2 = ic2 + a2 * ic1 + a3 * v3;
+            ic1 = 2 * v1 - ic1;
+            ic2 = 2 * v2 - ic2;
+            const double y = lp ? v2 : x - kk * v1 - v2;
+            double o = (x + ww * (y - x)) * 2147483648.0;
+            o = o > 2147483647.0 ? 2147483647.0 : o < -2147483648.0 ? -2147483648.0 : o;
+            mc_st32m(buf, 4 * i, (uint32_t)(int32_t)o);
+        }
+        if (fabs(ic1) < 1e-20) ic1 = 0.0;    /* no denormals */
+        if (fabs(ic2) < 1e-20) ic2 = 0.0;
+        f->g = gt, f->k = kt, f->w = wt, f->ic1 = ic1, f->ic2 = ic2;
+    }
+}
+
+static void engine_hook(mc_ctx *x, uint32_t pc)
+{
+    mc_engine *g = x->hook_user;
+    if (pc == TF_HOOK_BEFORE || pc == TF_HOOK_AFTER) {
+        if (g->smooth_filter)
+            (pc == TF_HOOK_BEFORE ? tf_before : tf_after)(g);
+        return;
+    }
+    fx_hook(x, pc);
+}
+
+static void engine_update_hook(mc_engine *g)
+{
+    g->x->hook = g->in_l || g->smooth_filter ? engine_hook : NULL;
+    g->x->hook_user = g;
+}
+
+void mc_engine_set_smooth_filter(mc_engine *g, int on)
+{
+    g->smooth_filter = on;
+    memset(g->tf, 0, sizeof g->tf);
+    engine_update_hook(g);
+}
+
 void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend)
 {
     g->in_l = l;
     g->in_r = r;
     g->in_delay = delaySend;
     g->in_reverb = reverbSend;
-    g->x->hook = l ? fx_hook : NULL;
-    g->x->hook_user = g;
+    engine_update_hook(g);
 }
 
 mc_engine *mc_engine_new(const char *dir, int *err)
@@ -134,10 +262,15 @@ static int call(mc_engine *g, uint32_t func, const uint32_t *args, int nargs)
 
 int mc_engine_param(mc_engine *g, int track, int offset, int value)
 {
+    return mc_engine_param_word(g, track, offset, value << 8);
+}
+
+int mc_engine_param_word(mc_engine *g, int track, int offset, int word)
+{
     mc_ctx *x = g->x;
     if (track < 0 || track > 6)
         return -1;
-    uint32_t v = (uint32_t)value << 8;
+    uint32_t v = (uint32_t)word & 0xffff;
     if (track < 6) {                                 /* sound record word */
         mc_st16_raw(x, g->kit + 0x1c + 100 * track + offset, v);
         uint32_t a[3] = {v, (uint32_t)track, (uint32_t)(offset - 0x14) / 2};

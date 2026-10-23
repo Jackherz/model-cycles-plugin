@@ -1,3 +1,4 @@
+#include <set>
 // Render every page of the CyclesEmu editor to PNG (layout check).
 //   CyclesEmuEditorShot OUT_DIR
 #include "../Source/PluginEditor.h"
@@ -468,6 +469,52 @@ int main(int argc, char** argv)
         }
     }
 
+    // does a pitch word written during a note move it, finely and at once?
+    // (the glide's way) Tone, a long note on track 1: frequency by zero
+    // crossings before and after the word changes mid-note
+    {
+        auto freqs = [&](int word, double& before, double& after, double& justAfter) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            for (auto* id : {"t1_decay", "t1_color", "t1_shape", "t1_sweep", "t1_contour", "t1_lfodepth"})
+                cyclesemu::setPlain(f.state(), id, juce::String(id) == "t1_decay" ? 127.0f
+                                                   : juce::String(id) == "t1_lfodepth" ? 64.0f : 0.0f);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            int c[3] = {};
+            float prev = 0;
+            for (int b = 0; b < 3200; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 1500)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                if (b == 2300)
+                    f.pokeWord(0, 0x28, word);
+                buf.clear();
+                f.processBlock(buf, midi);
+                const int w = b >= 1600 && b < 2300 ? 0 : b >= 2300 && b < 2400 ? 1 : b >= 2500 ? 2 : -1;
+                for (int i = 0; i < 32; ++i)
+                {
+                    const float s = buf.getSample(0, i);
+                    if (w >= 0)
+                        c[w] += prev < 0 && s >= 0;
+                    prev = s;
+                }
+            }
+            before = c[0] / ((700 * 32) / 48000.0);
+            justAfter = c[1] / ((100 * 32) / 48000.0);
+            after = c[2] / ((700 * 32) / 48000.0);
+        };
+        for (int word : {0x4080, 0x4400, 0x3c00})
+        {
+            double b, a, j;
+            freqs(word, b, a, j);
+            std::printf("pitch word 0x%04x mid-note: %.2f Hz -> %.2f Hz (%.3f st; first 67 ms %.3f st)\n", word, b, a,
+                        12 * std::log2(a / b), 12 * std::log2(j / b));
+        }
+    }
+
     // the LFO reaches each destination: the engine's value is the list's, and
     // the smoothed word that moves is that parameter's (k = value), not pan's
     int lfoBad = 0;
@@ -540,6 +587,196 @@ int main(int argc, char** argv)
         std::printf("lfo destination 3: on SD Vintage \"%s\", on Kick \"%s\" -> %s\n", sdv.toRawUTF8(),
                     kick.toRawUTF8(), sdv == "Freq Complex" && kick == "Shape" ? "PASS" : "FAIL");
         cyclesemu::setPlain(proc.state(), "t1_machine", machine0.getFloatValue());
+    }
+
+    // legato and portamento: Tone on track 1 (channel 1), the pitch word per
+    // engine block, the block's peak and the frequency over a stretch
+    {
+        struct Run
+        {
+            std::vector<int> word;
+            std::vector<float> peak, out;
+        };
+        auto play = [](std::initializer_list<std::pair<const char*, float>> settings,
+                       std::vector<std::tuple<int, int, bool>> events, int blocks) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            for (auto* id : {"t1_color", "t1_shape", "t1_sweep", "t1_contour"})
+                cyclesemu::setPlain(f.state(), id, 0.0f);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64.0f);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127.0f);
+            for (auto [id, v] : settings)
+                cyclesemu::setPlain(f.state(), id, v);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            Run r;
+            const uint32_t pitchAt = f.kitAddress() + 0x1c + 0x28;
+            for (int b = 0; b < 1500 + blocks; ++b)   // settled first, as elsewhere
+            {
+                juce::MidiBuffer midi;
+                for (auto [at, note, on] : events)
+                    if (at + 1500 == b)
+                        midi.addEvent(on ? juce::MidiMessage::noteOn(1, note, (juce::uint8)110)
+                                         : juce::MidiMessage::noteOff(1, note), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b < 1500)
+                    continue;
+                r.word.push_back((f.peek(pitchAt) << 8) | f.peek(pitchAt + 1));
+                r.peak.push_back(buf.getMagnitude(0, 0, 32));
+                for (int i = 0; i < 32; ++i)
+                    r.out.push_back(buf.getSample(0, i));
+            }
+            return r;
+        };
+        // semitones from C4 over blocks [from, to): the mean period between
+        // the first and last rising zero crossings, interpolated
+        auto semis = [](const Run& r, int from, int to) {
+            double first = -1, last = -1;
+            int c = 0;
+            for (int i = from * 32 + 1; i < to * 32; ++i)
+            {
+                const float a = r.out[(size_t)i - 1], b = r.out[(size_t)i];
+                if (a < 0 && b >= 0)
+                {
+                    const double at = i - 1 + a / (a - b);
+                    (first < 0 ? first : last) = at;
+                    last = at;
+                    ++c;
+                }
+            }
+            return 12 * std::log2((c - 1) * 48000.0 / (last - first) / 261.63);
+        };
+        // portamento, constant time 200 ms (ptim 73): 60, then 72 a second later
+        {
+            const float ptim = (float)juce::roundToInt(127.0 * std::log(200.0) / std::log(10000.0));
+            auto r = play({{"t1_port", 1}, {"t1_ptim", ptim}, {"t1_pslope", 1}},
+                          {{0, 60, true}, {1500, 60, false}, {1500, 72, true}}, 2400);
+            const int start = r.word[1500], mid = r.word[1500 + 150], end = r.word[1500 + 320];
+            const double after = semis(r, 1500 + 400, 2400);
+            const bool ok = start == 0x3400 + 0x0a && std::abs(mid - 0x3a00) < 0x30 && end == 0x4000
+                            && std::abs(after - 12.0) < 0.1;
+            std::printf("portamento 200 ms: word 0x%04x at the note, 0x%04x at 100 ms, 0x%04x at 213 ms, then %.2f st "
+                        "-> %s\n", start, mid, end, after, ok ? "PASS" : "FAIL");
+        }
+        // constant rate: 200 ms an octave, so two octaves take 400 ms
+        {
+            auto r = play({{"t1_port", 1}, {"t1_ptim", 73}, {"t1_pslope", 0}},
+                          {{0, 48, true}, {1500, 48, false}, {1500, 72, true}}, 2400);
+            int done = -1;
+            for (int b = 1500; b < (int)r.word.size() && done < 0; ++b)
+                if (r.word[b] == 0x4000)
+                    done = b - 1500;
+            std::printf("portamento, constant rate: two octaves in %.0f ms -> %s\n", done * 32 / 48.0,
+                        std::abs(done * 32 / 48.0 - 2 * cyclesemu::glideMs(73)) < 3 ? "PASS" : "FAIL");
+        }
+        // glissando: semitone steps only
+        {
+            auto r = play({{"t1_port", 1}, {"t1_ptim", 80}, {"t1_pslope", 1}, {"t1_pstyle", 1}},
+                          {{0, 60, true}, {1500, 60, false}, {1500, 67, true}}, 2400);
+            std::set<int> words(r.word.begin() + 1500, r.word.end());
+            const bool steps = std::all_of(words.begin(), words.end(), [](int w) { return (w & 0xff) == 0; });
+            std::printf("glissando: %d pitches, all whole semitones -> %s\n", (int)words.size(),
+                        steps && words.size() == 8 ? "PASS" : "FAIL");
+        }
+        // legato: 64 pressed while 60 is held moves the pitch without a new
+        // note (no new attack); with legato off it attacks again
+        {
+            auto attack = [&](bool legato) {
+                auto r = play({{"t1_legato", legato ? 1.0f : 0.0f}, {"t1_decay", 50.0f}},
+                              {{0, 60, true}, {600, 64, true}}, 1200);
+                float before = 0, after = 0;
+                for (int b = 560; b < 600; ++b)
+                    before = std::max(before, r.peak[(size_t)b]);
+                for (int b = 600; b < 640; ++b)
+                    after = std::max(after, r.peak[(size_t)b]);
+                return std::tuple{after / before, semis(r, 700, 1200), r.word[700]};
+            };
+            auto [legRise, legSemis, legWord] = attack(true);
+            auto [retRise, retSemis, retWord] = attack(false);
+            std::printf("legato: peak x%.2f after the second key (retriggered x%.2f), %.2f st (word 0x%04x); "
+                        "retriggered %.2f st (0x%04x) -> %s\n", legRise, retRise, legSemis, legWord, retSemis, retWord,
+                        legRise < 1.1f && retRise > 1.5f && std::abs(legSemis - 4) < 0.1 && legWord == 0x4400
+                                && std::abs(retSemis - 4) < 0.1 && retWord == 0x4000
+                            ? "PASS" : "FAIL");
+        }
+        // legato release: 60 held, 64 on top and let go, back to 60; then
+        // after all are let go, 62 plays at its own pitch from its start
+        {
+            auto r = play({{"t1_legato", 1}},
+                          {{0, 60, true}, {300, 64, true}, {600, 64, false}, {900, 60, false}, {1200, 62, true}}, 1800);
+            const double back = semis(r, 700, 900), next = semis(r, 1201, 1231), later = semis(r, 1300, 1800);
+            std::printf("legato release: back to %.2f st; then 62 at %.2f st in its first 20 ms, %.2f st later -> %s\n",
+                        back, next, later,
+                        std::abs(back) < 0.1 && std::abs(next - 2) < 0.1 && std::abs(later - 2) < 0.1 ? "PASS" : "FAIL");
+        }
+        // note priority Low: a higher key held over a lower one does not take over
+        {
+            auto r = play({{"t1_legato", 1}, {"t1_notepri", 1}}, {{0, 60, true}, {300, 67, true}}, 800);
+            const double s = semis(r, 400, 800);
+            std::printf("note priority low: %.2f st with 67 over 60 -> %s\n", s, std::abs(s) < 0.1 ? "PASS" : "FAIL");
+        }
+    }
+
+    // the filter under a fast LFO (sine, full depth, from closed): how big
+    // the output's steps are at block edges against inside blocks, the
+    // firmware's block-stepped filter against the smooth one
+    {
+        auto zipper = [](bool smooth, int cut, int speed) {
+            CyclesEmuProcessor f(Product::Full);
+            f.setSmoothFilter(smooth);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_fcut", (float)cut);
+            cyclesemu::setPlain(f.state(), "t1_freso", 0);
+            cyclesemu::setPlain(f.state(), "t1_lfodest", 14);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfospeed", (float)speed);
+            cyclesemu::setPlain(f.state(), "t1_lfowave", 1);
+            cyclesemu::setPlain(f.state(), "t1_lforeset", 0);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<float> out;
+            for (int b = 0; b < 3000; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 1000)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                if (b > 1100)
+                    for (int i = 0; i < 32; ++i)
+                        out.push_back(buf.getSample(0, i));
+            }
+            double edge = 0, inner = 0, level = 0;
+            int ne = 0, ni = 0;
+            for (size_t i = 2; i < out.size(); ++i)
+            {
+                const double d2 = std::abs(out[i] - 2 * out[i - 1] + out[i - 2]);
+                level = std::max(level, (double)std::abs(out[i]));
+                if (i % 32 == 0)
+                    edge += d2, ++ne;
+                else if (i % 32 > 2)
+                    inner += d2, ++ni;
+            }
+            return std::pair{(edge / ne) / (inner / ni), level};
+        };
+        bool ok = true;
+        for (int cut : {0, 32, 64, 100})
+        {
+            std::printf("filter lfo, cutoff %d: edge/inner steps", cut);
+            for (int speed : {80, 127})
+            {
+                auto [fw, fwLevel] = zipper(false, cut, speed);
+                auto [sm, smLevel] = zipper(true, cut, speed);
+                std::printf("  speed %d: firmware %.2f, smooth %.2f (peak %.3f vs %.3f)", speed, fw, sm, fwLevel, smLevel);
+                ok &= sm < 1.3;
+            }
+            std::printf("\n");
+        }
+        std::printf("filter lfo smooth -> %s\n", ok ? "PASS" : "FAIL");
     }
 
     // the help mode, as if hovering over a few controls

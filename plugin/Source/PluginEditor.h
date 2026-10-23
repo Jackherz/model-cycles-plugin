@@ -196,7 +196,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
-    Section sound{"SOUND"}, lfo{"LFO"}, filter{"FILTER"};
+    Section sound{"SOUND"}, lfo{"LFO"}, filter{"FILTER"}, glide{"GLIDE"};
     LfoScope scope;
     FilterScope filterScope;
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled

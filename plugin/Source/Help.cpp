@@ -121,6 +121,24 @@ const std::map<juce::String, HelpText> kHelp = {
       "How far an envelope moves the cutoff on each note, up or down (0 is none). It starts on every note "
       "and falls over Env Decay."}},
     {"fdec", {"Filter Env Decay", "How long the filter envelope takes to fall, from 5 ms to 10 seconds."}},
+    {"port",
+     {"Portamento",
+      "Each note glides to its pitch from the last note played, over Time. Track menu > Glide Setup: the "
+      "slope (a constant rate, Time per octave, or a constant time), Glissando (semitone steps), Legato Only "
+      "(glide only from a key still held) and Gating (the glide stops when the key is let go)."}},
+    {"legato",
+     {"Legato",
+      "A key pressed while another is held changes the pitch without starting the note again, and letting it "
+      "go returns to the key still held. Which held key plays: Track menu > Glide Setup > Note Priority. "
+      "CyclesVoice plays mono while it is on."}},
+    {"ptim",
+     {"Portamento Time",
+      "How long the glide takes, from 1 ms to 10 s: the time for the whole glide, or per octave with the "
+      "Constant Rate slope."}},
+    {"pamount",
+     {"Portamento Amount",
+      "How much of the distance the glide covers: 100 glides all the way from the last note, 50 starts "
+      "halfway there."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

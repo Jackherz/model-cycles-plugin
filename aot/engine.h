@@ -17,6 +17,9 @@ void mc_engine_free(mc_engine *g);
  * or an FX parameter with track 6 and its FX offset (0x12 delay time ...).
  * value 0-127, already clamped as the firmware clamps it. */
 int mc_engine_param(mc_engine *g, int track, int offset, int value);
+/* as mc_engine_param, with the whole 16-bit word (value << 8 plus a fraction
+ * in the low byte): for pitch glides finer than a semitone */
+int mc_engine_param_word(mc_engine *g, int track, int offset, int word);
 int mc_engine_level(mc_engine *g, int track, int value);
 int mc_engine_mute(mc_engine *g, int track, int muted);
 int mc_engine_note(mc_engine *g, int track, int note, int velocity, int on, uint32_t trig_flags);
@@ -37,6 +40,10 @@ void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n);
  * delay send and the reverb send, times the two amounts (0..1). l = NULL
  * stops it. Needs a render translated with --hook 4005698c --hook 40056a1c. */
 void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend);
+/* The track filter run here, its coefficients ramped per sample (engine.c),
+ * instead of the firmware's block-stepped one; off (bit-exact) by default.
+ * Needs a render translated with --hook 4014ab9c --hook 4014abe2. */
+void mc_engine_set_smooth_filter(mc_engine *g, int on);
 
 #ifdef __cplusplus
 }

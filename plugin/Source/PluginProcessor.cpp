@@ -82,6 +82,18 @@ const ParamDef kTrackParams[] = {
     {"freso", "Filter Reso", 0x4e, 0, 127, 71, Kind::Sound, Show::Plain},
     {"fenv", "Filter Env", 0x50, 0, 127, -1, Kind::Sound, Show::Bipolar},
     {"fdec", "Filter Env Decay", 0x52, 0, 127, -1, Kind::Sound, Show::Plain},
+    // legato and portamento (the plugin's): PORT, PTIM and AMOUNT, LEGATO,
+    // and the Syntakt's portamento setup (NOTES.md step 28). The order here
+    // is glideIds' below.
+    {"port", "Portamento", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    {"ptim", "Portamento Time", 0, 0, 127, -1, Kind::Glide, Show::GlideTime},
+    {"pamount", "Portamento Amount", 0, 0, 100, -1, Kind::Glide, Show::Plain},
+    {"legato", "Legato", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    {"notepri", "Note Priority", 0, 0, 2, -1, Kind::Glide, Show::Plain},
+    {"pslope", "Portamento Slope", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    {"pstyle", "Portamento Style", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    {"plegonly", "Portamento Legato Only", 0, 0, 1, -1, Kind::Glide, Show::Plain},
+    {"pgating", "Portamento Gating", 0, 0, 1, -1, Kind::Glide, Show::Plain},
 };
 const int kNumTrackParams = (int)(sizeof kTrackParams / sizeof kTrackParams[0]);
 
@@ -113,6 +125,8 @@ const std::vector<int>& snapPoints(const juce::String& bare)
     return bare == "delaytime" ? delay : bare == "lfospeed" ? speed : none;
 }
 
+double glideMs(int v) { return std::pow(10000.0, juce::jlimit(0, 127, v) / 127.0); }
+
 juce::String paramId(int track, const char* id)
 {
     if (track < 0)
@@ -137,7 +151,20 @@ const juce::StringArray* choicesFor(const char* id)
     if (!std::strcmp(id, "lforeset")) return &kLfoTrigNames;
     if (!std::strcmp(id, "lfomult")) return &kLfoMultNames;
     if (!std::strcmp(id, "lfodest")) return &kLfoDestNames;
+    static const juce::StringArray priority{"Last", "Low", "High"}, slope{"Constant Rate", "Constant Time"},
+        style{"Glide", "Glissando"};
+    if (!std::strcmp(id, "notepri")) return &priority;
+    if (!std::strcmp(id, "pslope")) return &slope;
+    if (!std::strcmp(id, "pstyle")) return &style;
     return nullptr;
+}
+
+const char* const glideIds[] = {"port", "ptim", "pamount", "legato", "notepri", "pslope", "pstyle", "plegonly", "pgating"};
+
+// a glide setting's starting value: a 100 ms time at full amount, the rest off
+int glideDefault(const char* id)
+{
+    return !std::strcmp(id, "ptim") ? 64 : !std::strcmp(id, "pamount") ? 100 : 0;
 }
 
 juce::String showValue(Show s, int v)
@@ -148,6 +175,11 @@ juce::String showValue(Show s, int v)
             if (v == at)
                 return name;
         return juce::String(v);
+    }
+    if (s == Show::GlideTime)
+    {
+        const double ms = glideMs(v);
+        return ms < 1000.0 ? juce::String(juce::roundToInt(ms)) + " ms" : juce::String(ms / 1000.0, 2) + " s";
     }
     switch (s)
     {
@@ -162,6 +194,12 @@ juce::String showValue(Show s, int v)
 int parseValue(Show s, const juce::String& t)
 {
     auto x = t.trim();
+    if (s == Show::GlideTime)   // a time ("250 ms", "1.5 s"), or the raw value
+    {
+        const double n = x.getDoubleValue();
+        const double ms = x.endsWithIgnoreCase("ms") ? n : x.endsWithIgnoreCase("s") ? n * 1000.0 : -1.0;
+        return ms > 0 ? juce::roundToInt(127.0 * std::log(ms) / std::log(10000.0)) : x.getIntValue();
+    }
     if (s == Show::NoteLength)
         for (auto [at, name] : kNoteLengths)
             if (x.equalsIgnoreCase(name))
@@ -243,6 +281,7 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     if (engine != nullptr)
     {
         mc_engine_set_tempo(engine, 120.0);   // internal clock; a saved state may wait for MIDI clock
+        mc_engine_set_smooth_filter(engine, 1);   // the track filter without zipper steps (engine.c)
         appliedBpm = 120.0;
         if (mc_engine_get_param(engine, 6, 0x16) > 126)   // reverb size 127 plays as 126 (step 10)
             mc_engine_param(engine, 6, 0x16, 126);
@@ -257,6 +296,14 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
         int v = engine ? currentEngineValue(s) : s.def->lo;
         s.lastParam = v;
         s.param->setValueNotifyingHost(s.param->convertTo0to1((float)v));
+    }
+    for (int t = 0; t < trackPages(); ++t)
+        for (int i = 0; i < kGlideParams; ++i)
+            glideRaw[t][i] = apvts.getRawParameterValue(paramId(t, glideIds[i]));
+    for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the pitch the glides add to
+    {
+        glides[t].userPitch = mc_engine_get_param(engine, t, 0x28);
+        glides[t].sentWord = glides[t].userPitch << 8;
     }
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the mixer's starting point
     {
@@ -316,6 +363,7 @@ void CyclesEmuProcessor::resetTrack(int t)
                     if (tr.hasType("Track") && (int)tr.getProperty("index") == t)
                         setPlain(apvts, id, (float)tr.getProperty("level"));
                 break;
+            case Kind::Glide: setPlain(apvts, id, (float)glideDefault(d.id)); break;
             case Kind::Fx: break;
         }
     }
@@ -367,6 +415,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                         if (kLfoDestValues[j] == k[4])
                             return (float)j;
                     return 0.0f;
+                case Kind::Glide: return (float)glideDefault(d.id);
                 case Kind::Level:
                 case Kind::Mute:
                 case Kind::Solo:
@@ -442,6 +491,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::Level: return mc_engine_get_level(engine, s.track);
         case Kind::Mute: return mc_engine_get_mute(engine, s.track);
         case Kind::Solo: return 0;
+        case Kind::Glide: return glideDefault(s.def->id);
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
@@ -492,20 +542,32 @@ void CyclesEmuProcessor::applyAll(const ParamDef& d, int track, int v)
 
 void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
 {
+    const auto gs = glideSettings(0);
+    // Legato: the sound plays mono, on the first voice. A key is released
+    // wherever it plays, should Legato have changed while it was down.
+    auto& mono = glides[0];
+    if (on && gs.legato)
+        return trackNote(0, note, velocity, on);
     const int n = juce::jlimit(1, kTracks, voiceCount != nullptr ? juce::roundToInt(voiceCount->load()) : kTracks);
     if (!on)
     {
+        if (std::find(mono.held, mono.held + mono.numHeld, note) != mono.held + mono.numHeld)
+            trackNote(0, note, velocity, on);
         for (int t = 0; t < kTracks; ++t)
             if (voices[t].on && voices[t].note == note)
             {
                 mc_engine_note(engine, t, note, 0, 0, 0x0681);
                 voices[t].on = false;
                 voices[t].age = ++voiceClock;
+                glides[t].frozen = gs.gating;
             }
         return;
     }
     // the voice released longest ago; with none free, the oldest playing
     int pick = -1;
+    bool anyOn = false;
+    for (int t = 0; t < n; ++t)
+        anyOn |= voices[t].on;
     for (int pass = 0; pass < 2 && pick < 0; ++pass)
         for (int t = 0; t < n; ++t)
             if ((pass == 1 || !voices[t].on) && (pick < 0 || voices[t].age < voices[pick].age))
@@ -513,7 +575,135 @@ void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
     if (voices[pick].on)
         mc_engine_note(engine, pick, voices[pick].note, 0, 0, 0x0681);
     voices[pick] = {note, true, ++voiceClock};
-    mc_engine_note(engine, pick, note, velocity, 1, 0x0681);
+    // portamento: from the pitch the last note played had reached, on whichever voice
+    const bool glide = gs.port && lastVoice >= 0 && (!gs.legatoOnly || anyOn);
+    startNote(pick, note, velocity, glide, lastVoice >= 0 ? glides[lastVoice].cur : 0.0, gs);
+    lastVoice = pick;
+}
+
+CyclesEmuProcessor::GlideSettings CyclesEmuProcessor::glideSettings(int page) const
+{
+    auto v = [&](int i) {
+        auto* p = glideRaw[page][i];
+        return p != nullptr ? juce::roundToInt(p->load(std::memory_order_relaxed)) : glideDefault(glideIds[i]);
+    };
+    return {v(0) != 0, v(3) != 0, v(5) != 0, v(6) != 0, v(7) != 0, v(8) != 0, v(4), glideMs(v(1)), v(2) / 100.0};
+}
+
+// The glide starts `amount` of the way back toward where it came from, and
+// moves at a constant rate (an octave in the time) or takes the time whatever
+// the distance.
+void CyclesEmuProcessor::beginGlide(Glide& g, double from, const GlideSettings& s)
+{
+    g.cur = g.target + (from - g.target) * s.amount;
+    const double blocks = std::max(1.0, s.ms * 48.0 / kBlock);
+    g.step = s.constTime ? std::abs(g.cur - g.target) / blocks : 12.0 / blocks;
+    g.frozen = false;
+    g.glissando = s.glissando;
+}
+
+void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide, double from, const GlideSettings& s)
+{
+    auto& g = glides[track];
+    g.trig = note;
+    g.velocity = velocity;
+    g.target = note;
+    if (glide)
+        beginGlide(g, from, s);
+    else
+        g.cur = note, g.step = 0;
+    writePitch(track);   // first: the note starts where the glide does
+    mc_engine_note(engine, track, note, velocity, 1, 0x0681);
+}
+
+// Legato: to another key without a new trigger, the pitch word carrying the
+// difference; beyond the pitch's +-24 semitones, a new trigger after all.
+void CyclesEmuProcessor::legatoTo(int track, int note, const GlideSettings& s)
+{
+    auto& g = glides[track];
+    const int total = g.userPitch + note - g.trig;
+    if (total < 40 || total > 88)
+        return startNote(track, note, g.velocity, s.port, g.cur, s);
+    g.target = note;
+    if (s.port)
+        beginGlide(g, g.cur, s);
+    else
+        g.cur = note, g.step = 0;
+    writePitch(track);
+}
+
+// A track's notes: in Legato, a key pressed while another is held moves the
+// pitch (to the key Note Priority picks) instead of triggering, and releasing
+// it goes back to the one held; otherwise every key triggers, gliding from
+// the last note when Portamento is on (Legato Only: only from a held one).
+void CyclesEmuProcessor::trackNote(int track, int note, int velocity, bool on)
+{
+    const auto s = glideSettings(isVoice() ? 0 : track);
+    auto& g = glides[track];
+    const bool anyHeld = g.numHeld > 0;
+    g.numHeld = (int)(std::remove(g.held, g.held + g.numHeld, note) - g.held);
+    auto priorityNote = [&] {
+        if (s.priority == 1)
+            return *std::min_element(g.held, g.held + g.numHeld);
+        if (s.priority == 2)
+            return *std::max_element(g.held, g.held + g.numHeld);
+        return g.held[g.numHeld - 1];
+    };
+    if (on)
+    {
+        if (g.numHeld == (int)std::size(g.held))   // full: forget the oldest
+            std::copy(g.held + 1, g.held + g.numHeld--, g.held);
+        g.held[g.numHeld++] = note;
+        if (s.legato && anyHeld && g.trig >= 0)
+        {
+            if (const int want = priorityNote(); want != (int)g.target)
+                legatoTo(track, want, s);
+            return;
+        }
+        return startNote(track, note, velocity, s.port && g.trig >= 0 && (!s.legatoOnly || anyHeld), g.cur, s);
+    }
+    if (s.legato && g.numHeld > 0)
+    {
+        if (const int want = priorityNote(); want != (int)g.target)
+            legatoTo(track, want, s);
+        return;
+    }
+    if (s.legato && !anyHeld)
+        return;   // not a key it knew of
+    mc_engine_note(engine, track, s.legato ? g.trig : note, 0, 0, 0x0681);
+    if (s.gating && (s.legato || note == g.trig))   // Gating: the glide stops with the key
+        g.frozen = true;
+}
+
+// The track's pitch word: its Pitch, plus where the glide is relative to the
+// note the engine was triggered with (Glissando: in whole semitones).
+void CyclesEmuProcessor::writePitch(int track, bool force)
+{
+    auto& g = glides[track];
+    const double at = g.glissando && g.step > 0 ? std::round(g.cur) : g.cur;
+    const int offset = g.trig >= 0 ? juce::roundToInt((at - g.trig) * 256.0) : 0;
+    const int word = juce::jlimit(40 << 8, 88 << 8, (g.userPitch << 8) + offset);
+    if (word != g.sentWord || force)
+    {
+        mc_engine_param_word(engine, track, 0x28, word);
+        g.sentWord = word;
+    }
+}
+
+void CyclesEmuProcessor::updateGlides()
+{
+    for (int t = 0; t < kTracks; ++t)
+    {
+        auto& g = glides[t];
+        if (g.step <= 0 || g.frozen)
+            continue;
+        const double d = g.target - g.cur;
+        if (std::abs(d) <= g.step)
+            g.cur = g.target, g.step = 0;
+        else
+            g.cur += d > 0 ? g.step : -g.step;
+        writePitch(t);
+    }
 }
 
 void CyclesEmuProcessor::applyLfoMult(int track)
@@ -534,7 +724,16 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
         v = 126;
     switch (d.kind)
     {
-        case Kind::Sound: mc_engine_param(engine, track, d.offset, v); break;
+        case Kind::Sound:
+            if (d.offset == 0x28)   // pitch: with the glide's offset
+            {
+                glides[track].userPitch = v;
+                writePitch(track, true);
+            }
+            else
+                mc_engine_param(engine, track, d.offset, v);
+            break;
+        case Kind::Glide: break;   // read at each note
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::Level:
             levelNow[track] = v;
@@ -599,7 +798,7 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         }
         if (track < 0 || track >= kTracks)
             return;
-        mc_engine_note(engine, track, note, m.isNoteOn() ? m.getVelocity() : 0, m.isNoteOn() ? 1 : 0, 0x0681);
+        trackNote(track, note, m.getVelocity(), m.isNoteOn());
         return;
     }
     if (ch < 0 || ch >= kTracks || !m.isController())
@@ -772,6 +971,7 @@ void CyclesEmuProcessor::fxProcess(juce::AudioBuffer<float>& buffer)
 void CyclesEmuProcessor::renderEngineBlock()
 {
     applyParameterChanges();
+    updateGlides();
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {
         mc_engine_set_tempo(engine, targetBpm);

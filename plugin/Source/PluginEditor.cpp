@@ -682,6 +682,10 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     filter.addRow({make(st, t, "fcut", "Cutoff", S::Knob), make(st, t, "freso", "Reso", S::Knob),
                    make(st, t, "fenv", "Env", S::Knob), make(st, t, "fdec", "Decay", S::Knob)});
     addAndMakeVisible(filterScope);
+    // legato and portamento; the rest of the Syntakt's setup in the Track menu
+    addAndMakeVisible(glide);
+    glide.addRow({make(st, t, "port", "Port", S::Toggle), make(st, t, "legato", "Legato", S::Toggle),
+                  make(st, t, "ptim", "Time", S::Knob), make(st, t, "pamount", "Amount", S::Knob)});
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
         section->enableDice([this, &st, t, which = which](bool variation) {
@@ -695,9 +699,12 @@ void TrackPage::resized()
 {
     auto r = getLocalBounds();
     // the filter page along the bottom: its knobs, and the response beside
+    // and the glide's to the right
     auto bottom = r.removeFromBottom(162).withTrimmedTop(6);
-    filter.setBounds(bottom.removeFromLeft(bottom.getWidth() * 62 / 100).withTrimmedRight(6));
-    filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedTop(8));
+    const int w = bottom.getWidth();
+    glide.setBounds(bottom.removeFromRight(w * 38 / 100).withTrimmedLeft(6));
+    filter.setBounds(bottom.removeFromLeft(w * 40 / 100).withTrimmedRight(6));
+    filterScope.setBounds(bottom.withTrimmedLeft(6).withTrimmedRight(6).withTrimmedTop(8));
     sound.setBounds(r.removeFromLeft(r.getWidth() * 62 / 100).withTrimmedRight(6));
     lfo.setBounds(r.withTrimmedLeft(6));
 }
@@ -954,6 +961,27 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
         proc.resetTrack(current);
         status.setText("Track " + juce::String(current + 1) + " reset", juce::dontSendNotification);
     });
+    // the Syntakt's portamento setup, and legato's note priority
+    if (track)
+    {
+        juce::PopupMenu glideMenu;
+        auto choice = [&](const char* id, const juce::String& title, juce::StringArray items) {
+            glideMenu.addSectionHeader(title);
+            auto* p = proc.state().getParameter(paramId(current, id));
+            const int now = juce::roundToInt(p->convertFrom0to1(p->getValue()));
+            for (int i = 0; i < items.size(); ++i)
+                glideMenu.addItem(items[i], true, now == i, [this, id, i] {
+                    setPlain(proc.state(), paramId(current, id), (float)i);
+                });
+        };
+        choice("pslope", "Slope", {"Constant Rate", "Constant Time"});
+        choice("pstyle", "Style", {"Glide", "Glissando"});
+        choice("plegonly", "Legato Only", {"Off", "On"});
+        choice("pgating", "Gating", {"Off", "On"});
+        choice("notepri", "Note Priority (Legato)", {"Last", "Low", "High"});
+        m.addSeparator();
+        m.addSubMenu("Glide Setup", glideMenu);
+    }
     m.addSeparator();
     const char* names[] = {"Sound", "LFO", "Filter"};
     const RandomSection which[] = {RandomSection::Sound, RandomSection::Lfo, RandomSection::Filter};

@@ -1201,6 +1201,77 @@ Jack's report: an LFO aimed at Filt Cutoff panned the sound as Depth rose.
   list's value and the LFO moves that parameter's smoothed word, and pan's
   only for Pan.
 
+## Step 28: legato and portamento, after the Syntakt (2026-10-23)
+
+Jack asked for legato and portamento "similar to the Syntakt firmware"
+(Syntakt OS 1.40 manual: TRIG page PORT / PTIM, LEGATO with NOTE PRIORITY,
+and the portamento setup SLOPE, AMOUNT, STYLE, LEGATO ONLY, GATING). Not in
+the Model:Cycles firmware, so it is the plugin's.
+- **The engine's way in**: a pitch word written during a note moves it, and
+  its low byte is honoured (0x4080 is half a semitone). The firmware's own
+  parameter smoothing glides a step over a few tens of ms (0x4400 mid-note
+  reaches 3.2 of 4 semitones in the first 67 ms).
+  - `mc_engine_param_word(g, track, offset, word)`, the whole 16-bit word.
+    `mc_engine_param` now calls it with `value << 8`.
+- **Parameters** (`Kind::Glide`, per track, read at each note):
+  - On the page: `port`, `ptim` (0-127 = 1 ms-10 s, exponential, shown as
+    a time; 64 = 100 ms), `pamount` (0-100, default 100), `legato`.
+  - Track menu > Glide Setup: `pslope` (Constant Rate: Time per octave;
+    Constant Time), `pstyle` (Glide / Glissando), `plegonly`, `pgating`,
+    `notepri` (Last / Low / High).
+- **How it plays** (`trackNote`, `startNote`, `legatoTo`, `updateGlides`):
+  - The engine plays the note it was triggered with. The pitch word is Pitch
+    plus the glide's offset from that note, in 1/256 semitones, clamped to
+    the pitch's range and written only when it changes, every engine block.
+  - Legato: a key pressed while another is held moves the pitch without a
+    trigger. Releasing it returns to the held key that Note Priority picks.
+    Beyond the pitch's +-24 semitones it triggers after all.
+  - Portamento starts Amount of the way back from the last note's current
+    pitch. Legato Only: only from a held key. Gating: the glide stops on
+    release. Glissando: whole semitones.
+  - CyclesVoice: Legato plays the sound mono on voice 1. Portamento glides
+    each new voice from the pitch the last-played voice had reached.
+- EditorShot: a 200 ms constant-time glide, a two-octave constant-rate glide
+  in 2 x PTIM, glissando's eight whole-semitone pitches, legato with no new
+  attack (peak x0.89 against x5.00 retriggered), back to the held key, the
+  next note at its own pitch from its first 20 ms, and Low priority. Pitch
+  is measured from interpolated zero crossings.
+
+## Step 29: the track filter without zipper clicks (2026-10-23)
+
+Jack's report: an LFO on the filter cutoff clicks, worst at high depth with
+the cutoff at 0; it should be as smooth as the Syntakt's or the DN2's.
+- **Causes**, measured with Tone, a sine LFO at full depth:
+  - Modded-Cycles' filter reads its smoothed words once per 32-frame block
+    and steps its coefficients there. At the block edges the output's
+    second difference is 6-35x its size inside blocks (speed 80-127).
+  - Full depth spans the cutoff word 0x0000-0x7dff from the knob at 0. It
+    crosses the centre, so the filter flipped from LP to OFF to HP.
+- **Fix, `engine.c`**: the same filter, run in C.
+  - `build-stf` is translated with two more hooks in `tf_post`:
+    - `0x4014ab9c`, after the block's trigs are stored at `tf_trig`. It
+      saves each track's smoothed cutoff, reso, env and decay words, and
+      shows the firmware every cutoff at the centre, where it leaves the
+      track alone.
+    - `0x4014abe2`, after the loop. It restores the words and filters the
+      track buffers.
+    - render.c gained only those lines and one dispatch case.
+  - Same laws as `gen_track_filter.py`: cutoff, Q, resonance scaling and
+    envelope decay. Its coefficients and wet share ramp per sample from one
+    block's values to the next.
+  - The side (LP or HP) is the knob's. Modulation and the envelope open or
+    close it within that side. With the knob at OFF, the modulated side
+    applies, and a change of side passes through the dry signal for a block.
+  - `mc_engine_set_smooth_filter(g, on)` is off by default, so the
+    bit-exact checks see the firmware's filter. The plugin turns it on.
+- Checks: the re-hooked `build-stf` replays 300/300 (`cap-filter`) and
+  200/200 (`cap-driven`) bit-exact with no hook installed. HostTest 8 PASS
+  (6.7 % at 48 kHz), auval passes for Cyem, Cyvo and Cyfx, and PGO was
+  redone.
+- EditorShot: edge/inner step ratio, firmware against smooth, at cutoffs 0,
+  32, 64 and 100, at speeds 80 and 127: 6.5-34.9 against 0.98-1.01 (1.27 at
+  OFF, speed 127). PASS under 1.3.
+
 ## Next steps
 
 
@@ -1264,24 +1335,36 @@ Jack's report: an LFO aimed at Filt Cutoff panned the sound as Depth rose.
       - The DN2's filters run on its SHARC DSP, which can't run in real
         time yet (the paused DN2 project), so they can't be moved over as
         code.
-      - Route: a `--hook` where the mixer takes the finished track buffers
-        (`0x80001858 + 128 t`, at the mixer's entry `0x400567ba`).
+      - Route: now the step 29 C filter in `engine.c` (`tf_after`). It
+        already runs on the track buffers with the firmware's filter
+        skipped, so the types go there.
       - The plugin then runs its own per-track filters in place: types as
         the DN2's, from its firmware notes and code (`~/Documents/AI/
         digitone2-plugin`). Faithful re-creations, not bit-exact.
       - The DN2's types (its NOTES, sound record `0xb4 + 2r`): 0
         Multimode, 1 Lowpass 4, 2 Equalizer, 3 Comb-, 4 Legacy (LP/HP),
         5 Comb+.
-   j. **Legato and portamento, as on the Syntakt** (Jack, 2026-10-23; base
-      them on the Syntakt's / Digitone II's behaviour, not the Cycles').
-      Not in the Model:Cycles firmware: plugin-side, a held note's new note
-      re-pitches the sounding voice (no retrigger), gliding its Pitch / Fine
-      Tune words over a Glide time.
+   j. ~~Legato and portamento~~: done, step 28.
    k. CyclesFX: a smaller window (it shares the instrument's 960x780).
    i. **CHOMPI's tape record function** (Jack, 2026-10-23,
       https://github.com/CHOMPI-Club/CHOMPI). After everything else is
       finished and debugged: study how it works and how it could fit the
       plugin.
+   l. **Other delay and reverb engines** (Jack, 2026-10-23). Instead of the
+      Model:Cycles' own delay and reverb:
+      - Port the Syntakt's or the Digitone II's delay and reverb if
+        possible. The Syntakt's runs on the same ColdFire codebase (the
+        Syntakt_OS1.42.syx in firmware/). The DN2's is the DSP code already
+        studied in ~/Documents/AI/digitone2-plugin.
+      - Add a switch to CHOMPI's delay and reverb (with item i).
+      - Survey open-source reverbs and delays that suit the sound palette,
+        including the Schwung module catalogue (its modules' code is on
+        GitHub). Check each licence: everything here is personal use, but
+        record where code came from.
+      - Shape: an FX engine choice (Cycles / Syntakt or DN2 / CHOMPI /
+        others) in the FX page and CyclesFX. Plugin-side engines run on the
+        send buses at the existing hooks (0x4005698c / 0x40056a1c), with
+        the firmware's own effects skipped.
 
 Future ideas (Jack, 2026-10-22): make it its own instrument rather than an
 Elektron copy, for future builds; not scheduled yet.
