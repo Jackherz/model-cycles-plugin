@@ -1372,21 +1372,23 @@ cheap.
 - EditorShot: a drum-map note for track 3 lights its tab only, the page
   stays, and the light goes out after 150 ms.
 
-## Next steps
+## Step 33: the mixer meter eases with the level (2026-10-24)
 
-**First, when Jack returns (2026-10-24): the mixer meter jumps when the level
-changes.** With a sound playing, moving a track's level makes its meter jump
-a little instead of moving smoothly. Likely causes to check:
-- The meter scales the pre-fader peak by `levelSent` straight away (step 31).
-  But the firmware probably smooths the level change over several blocks,
-  and a knob drag moves in steps. So the meter steps ahead of the sound.
-  Use the level the firmware is actually applying (its smoothed level word
-  or gain, if it can be found the way step 30 found the pitch smoother), or
-  smooth the meter's gain the same way.
-- The meter's own ballistics in `MixerPage` (attack/release per frame):
-  check they don't hold a stale peak and then drop.
-- Verify with a test: a held note, the level ramped in small steps; the
-  meter's per-frame changes should stay small.
+Jack: with a sound playing, changing a track's level made its meter jump.
+- **Cause**: the meter applied the new level at once (step 31), while the
+  firmware fades it. Measured from the output against a render that stays
+  at 127, after steps 127 -> 64, 0 and 100: each block the level moves
+  1 - 0.9696 of the way to its target, and the gain is the level squared.
+  All three steps fit within about a percent.
+- The smoothed level wasn't found in SRAM `0x80000000-0x8000ffff` (only
+  the instant copy at `0x800015a0`), so the plugin eases the meter's level
+  the same way (`levelEased`).
+- The mixer page's ballistics (instant up, x0.85 a frame down) were fine.
+- EditorShot: after 127 -> 64, the meter follows the sound's gain within
+  0.022, at most 0.029 a block. The level-0 check now allows the fade
+  (under 0.005 after 100 blocks).
+
+## Next steps
 
 
 

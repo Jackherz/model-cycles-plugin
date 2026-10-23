@@ -326,6 +326,7 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the mixer's starting point
     {
         levelNow[t] = levelSent[t] = mc_engine_get_level(engine, t);
+        levelEased[t] = (float)levelSent[t] / 127.0f;
         mutedNow[t] = mc_engine_get_mute(engine, t) != 0;
     }
     if (engine != nullptr)
@@ -1028,9 +1029,12 @@ void CyclesEmuProcessor::renderEngineBlock()
                 peak = std::max(peak, s == INT32_MIN ? INT32_MAX : std::abs(s));
             }
             // post-fader: the firmware's level gain is (level / 127)^2
-            // (measured: output exactly proportional to level squared), and
-            // levelSent is 0 while muted or soloed out
-            const float lv = (float)juce::jmax(0, levelSent[t]) / 127.0f;
+            // (measured: output exactly proportional to level squared), the
+            // level eased toward levelSent (0 while muted or soloed out) by
+            // 1 - 0.9696 a block, as the firmware does (measured from the
+            // output after level steps 127 -> 64, 0, 100)
+            levelEased[t] += ((float)juce::jmax(0, levelSent[t]) / 127.0f - levelEased[t]) * (1.0f - 0.9696f);
+            const float lv = levelEased[t];
             const float p = (float)peak / 2147483648.0f * lv * lv;
             float prev = trackPeaks[t].load(std::memory_order_relaxed);
             while (p > prev && !trackPeaks[t].compare_exchange_weak(prev, p, std::memory_order_relaxed))

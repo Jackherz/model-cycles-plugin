@@ -1,3 +1,4 @@
+#include <cstring>
 #include <complex>
 #include <juce_dsp/juce_dsp.h>
 #include <set>
@@ -406,7 +407,7 @@ int main(int argc, char** argv)
                 if (stage >= 0 && (b - 1500) % 300 > 100)
                     at[stage] = std::max(at[stage], p);
             }
-            const bool ok = at[0] > 0.05f && std::abs(at[1] / at[0] - 0.254f) < 0.02f && at[2] == 0.0f;
+            const bool ok = at[0] > 0.05f && std::abs(at[1] / at[0] - 0.254f) < 0.02f && at[2] < 0.005f;   // level 0: faded, as the sound
             std::printf("meter post-fader: level 127 %.3f, 64 %.3f (x%.3f, (64/127)^2 = 0.254), 0 %.3f -> %s\n", at[0],
                         at[1], at[1] / at[0], at[2], ok ? "PASS" : "FAIL");
         }
@@ -938,6 +939,56 @@ int main(int argc, char** argv)
         std::printf("tab lights: a note on track 3 lights its tab %s (track 1's dark %s), the page stays %s, out after "
                     "150 ms %s -> %s\n", lit ? "yes" : "no", otherDark ? "yes" : "no", stayed ? "yes" : "no",
                     unlit ? "yes" : "no", lit && otherDark && stayed && unlit ? "PASS" : "FAIL");
+    }
+
+    // the meter eases with the sound: a held Tone, level 127 -> 64; each
+    // block, the meter (over its level-127 value) against the output (over
+    // a render that stays at 127): the firmware's own fade
+    {
+        auto run = [](bool step, std::vector<double>& meter) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64);
+            cyclesemu::setPlain(f.state(), "t1_delaysend", 0);
+            cyclesemu::setPlain(f.state(), "t1_reverbsend", 0);
+            cyclesemu::setPlain(f.state(), "t1_level", 127);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<double> e;
+            for (int b = 0; b < 2000 + 120; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 1500)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)110), 0);
+                if (b == 2000 && step)
+                    cyclesemu::setPlain(f.state(), "t1_level", 64);
+                buf.clear();
+                f.processBlock(buf, midi);
+                const float pk = f.takeTrackPeak(0);
+                if (b >= 2000)
+                {
+                    double s2 = 0;
+                    for (int i = 0; i < 32; ++i)
+                        s2 += (double)buf.getSample(0, i) * buf.getSample(0, i) + (double)buf.getSample(1, i) * buf.getSample(1, i);
+                    e.push_back(std::sqrt(s2));
+                    meter.push_back(pk);
+                }
+            }
+            return e;
+        };
+        std::vector<double> m0, m1;
+        const auto ref = run(false, m0), st = run(true, m1);
+        double worst = 0, biggestStep = 0;
+        for (size_t k = 0; k < st.size(); ++k)
+        {
+            worst = std::max(worst, std::abs(m1[k] / m0[k] - st[k] / ref[k]));
+            if (k > 0)
+                biggestStep = std::max(biggestStep, std::abs(m1[k] / m0[k] - m1[k - 1] / m0[k - 1]));
+        }
+        std::printf("meter eases with the level: off the sound's gain by at most %.3f, at most %.3f a block -> %s\n", worst,
+                    biggestStep, worst < 0.03 && biggestStep < 0.03 ? "PASS" : "FAIL");
     }
 
     // the help mode, as if hovering over a few controls

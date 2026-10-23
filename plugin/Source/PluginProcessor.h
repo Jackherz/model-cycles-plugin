@@ -231,6 +231,9 @@ private:
     int levelNow[cyclesemu::kTracks] = {100, 100, 100, 100, 100, 100};
     bool mutedNow[cyclesemu::kTracks] = {}, soloNow[cyclesemu::kTracks] = {};
     int levelSent[cyclesemu::kTracks] = {-1, -1, -1, -1, -1, -1};
+    // the level as the firmware applies it: it eases each change, 3 % of
+    // the way a block (measured, NOTES.md step 33), for the meters
+    float levelEased[cyclesemu::kTracks] = {};
     int filterType[cyclesemu::kTracks] = {}, filterExtra[cyclesemu::kTracks] = {};
     void applyMix();
     // per-track peaks since the editor last looked, from the render's track
