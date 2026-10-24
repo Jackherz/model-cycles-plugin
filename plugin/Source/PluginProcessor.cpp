@@ -108,7 +108,6 @@ const ParamDef kTrackParams[] = {
     // SP TWINSHOT's two settings beyond the Cycles' knobs (its bridge reads
     // the track's k23 and k24, step 38): Sample 2, Overdrive
     {"twsamp2", "Twinshot Sample 2", 0x42, 0, 127, -1, Kind::KitWord, Show::Plain},
-    {"twdrive", "Twinshot Overdrive", 0x44, 0, 127, -1, Kind::KitWord, Show::Plain},
     // legato and portamento (the plugin's): PORT, PTIM and AMOUNT, LEGATO,
     // and the Syntakt's portamento setup (NOTES.md step 28). The order here
     // is glideIds' below.
@@ -992,7 +991,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::FxEngine: updateFxEngines(); break;
-        case Kind::KitWord: mc_engine_twin_param(engine, track, d.offset == 0x42 ? 0 : 1, v); break;
+        case Kind::KitWord: mc_engine_twin_param(engine, track, 0, v); break;   // Sample 2
         case Kind::Level:
             levelNow[track] = v;
             applyMix();

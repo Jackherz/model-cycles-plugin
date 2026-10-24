@@ -5,6 +5,8 @@
 // Render every page of the CyclesEmu editor to PNG (layout check).
 //   CyclesEmuEditorShot OUT_DIR
 #include "../Source/PluginEditor.h"
+#include "../Source/Fanfare.h"
+#include "../Source/Help.h"
 #include <map>
 
 int main(int argc, char** argv)
@@ -633,10 +635,13 @@ int main(int argc, char** argv)
         f.deleteFile();
         juce::FileOutputStream os(f);
         juce::PNGImageFormat().writeImageToStream(img, os);
+        cyclesemu::setPlain(proc.state(), "t1_machine", 11);   // the closed list's text follows too
+        const auto twinShown = dest ? dest->shownText() : juce::String("?");
         cyclesemu::setPlain(proc.state(), "t1_machine", 0);
         const auto kick = dest ? dest->itemText(3) : juce::String("?");
-        std::printf("lfo destination 3: on SD Vintage \"%s\", on Kick \"%s\" -> %s\n", sdv.toRawUTF8(),
-                    kick.toRawUTF8(), sdv == "Freq Complex" && kick == "Shape" ? "PASS" : "FAIL");
+        std::printf("lfo destination 3: on SD Vintage \"%s\", on Kick \"%s\", SP Twinshot shows \"%s\" -> %s\n",
+                    sdv.toRawUTF8(), kick.toRawUTF8(), twinShown.toRawUTF8(),
+                    sdv == "Freq Complex" && kick == "Shape" && twinShown == "Filter 1" ? "PASS" : "FAIL");
         cyclesemu::setPlain(proc.state(), "t1_machine", machine0.getFloatValue());
     }
 
@@ -1109,6 +1114,29 @@ int main(int argc, char** argv)
                     full > none * 4 ? "PASS" : "FAIL");
     }
 
+    // the kit-saved fanfare: plays, finite, at -6 dBFS, about 2 s
+    {
+        auto b = cyclesemu::renderFanfare();
+        bool finite = true;
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                finite &= std::isfinite(b.getSample(c, i));
+        const float peak = b.getMagnitude(0, b.getNumSamples());
+        const double secs = b.getNumSamples() / 44100.0;
+        if (auto* fp = std::fopen(out.getChildFile("fanfare.f32").getFullPathName().toRawUTF8(), "wb"))
+        {
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                for (int c = 0; c < 2; ++c)
+                {
+                    const float x = b.getSample(c, i);
+                    std::fwrite(&x, 4, 1, fp);
+                }
+            std::fclose(fp);
+        }
+        std::printf("fanfare: %.2f s, peak %.3f -> %s\n", secs, peak,
+                    finite && std::abs(peak - 0.5f) < 0.01f && secs > 1.5 && secs < 3.0 ? "PASS" : "FAIL");
+    }
+
     // the SOUND SETUP panel, with a slot of each set
     {
         e->showPage(0);
@@ -1253,6 +1281,32 @@ int main(int argc, char** argv)
                             cyclesemu::kMachineNames[m].toRawUTF8(), m == 11 ? (loaded ? " loaded" : " no samples") : "",
                             std::sqrt(e / (400 * 32)), zc, f.engineValue(0, 0x26), f.twinSamples().count());
             }
+
+    // every control's help: each one with a help id has a text, on every
+    // machine (the knobs' meanings change with it)
+    {
+        std::set<juce::String> ids;
+        std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+            if (c.getProperties().contains("helpId"))
+                ids.insert(c.getProperties()["helpId"].toString());
+            for (auto* k : c.getChildren())
+                walk(*k);
+        };
+        walk(*e);
+        int missing = 0;
+        for (auto& id : ids)
+            for (int m = 0; m < 12; ++m)
+                if (cyclesemu::helpFor(id, m).title.isEmpty() || cyclesemu::helpFor(id, m).body.isEmpty())
+                {
+                    if (missing++ < 10)
+                        std::printf("help: none for %s on machine %d\n", id.toRawUTF8(), m);
+                }
+        for (auto* id : {"t1_color", "t1_shape", "t1_sweep", "t1_contour", "t1_pitch", "t1_decay"})
+            std::printf("help on SP Twinshot, %s: %s: %s\n", id, cyclesemu::helpFor(id, 11).title.toRawUTF8(),
+                        cyclesemu::helpFor(id, 11).body.toRawUTF8());
+        std::printf("help: %d controls, each with a text on all 12 machines -> %s\n", (int)ids.size(),
+                    missing == 0 ? "PASS" : "FAIL");
+    }
 
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},

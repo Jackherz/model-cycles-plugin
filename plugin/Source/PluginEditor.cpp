@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "Settings.h"
+#include "Fanfare.h"
 #include "LfoShape.h"
 
 using namespace cyclesemu;
@@ -142,12 +143,20 @@ void ParamControl::setLabel(const juce::String& text)
 
 void ParamControl::setItemText(int index, const juce::String& text)
 {
+    // the shown text too, if it is the one selected: ComboBox::setText looks
+    // the text up in its items and dropped the selection instead
+    const int id = box.getSelectedId();
     box.changeItemText(index + 1, text);
-    if (box.getSelectedItemIndex() == index)   // the shown text too
-        box.setText(text, juce::dontSendNotification);
+    if (id == index + 1)
+    {
+        box.setSelectedId(0, juce::dontSendNotification);
+        box.setSelectedId(id, juce::dontSendNotification);
+    }
 }
 
 juce::String ParamControl::itemText(int index) const { return box.getItemText(index); }
+
+juce::String ParamControl::shownText() const { return box.getText(); }
 
 void ParamControl::setValueText(std::function<juce::String(double)> f)
 {
@@ -709,14 +718,13 @@ void ModPanel::resized()
 }
 
 // SP TWINSHOT's page 1 (the macro knobs as Sample 1, Filter 1, Mix, Tune 2)
-// or page 2 (Sample 2 and Drive in their places); other machines: page 1
+// or page 2 (Sample 2 in Color's place); other machines: page 1
 void TrackPage::showTwinPage()
 {
     const bool p2 = twinMachine && twinOnPage2;
     for (int i = 0; i < 4; ++i)   // Color .. Contour
         macroKnobs[i]->setVisible(!p2);
     twinSample2->setVisible(p2);
-    twinDrive->setVisible(p2);
     twinPage.setVisible(twinMachine);
     twinPage.setButtonText(p2 ? "Page 2" : "Page 1");
     sound.resized();
@@ -758,12 +766,10 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     // SP TWINSHOT's page 2 shares this row: its knobs hidden until then
     processor = &proc;
     twinSample2 = make(st, t, "twsamp2", "Smp 2", S::Knob);
-    twinDrive = make(st, t, "twdrive", "Drive", S::Knob);
     twinSample2->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
     sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob), color, shape,
-                  sweep, contour, twinSample2, twinDrive});
+                  sweep, contour, twinSample2});
     twinSample2->setVisible(false);
-    twinDrive->setVisible(false);
     sound.minColumns = 6;   // the knobs one size on either Twinshot page
     twinPage.onClick = [this] {
         twinOnPage2 = !twinOnPage2;
@@ -904,7 +910,7 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     addChildComponent(modPanel);
     modPanel.onClose = [this] { showSetup(false); };
     setupButton.onClick = [this] { showSetup(!modPanel.isVisible()); };
-    setupButton.getProperties().set("helpId", paramId(t, "vm1dst"));
+    setupButton.getProperties().set("helpId", paramId(t, "soundsetup"));
     addAndMakeVisible(setupButton);
     for (auto [section, which] : {std::pair{&sound, RandomSection::Sound}, std::pair{&lfo, RandomSection::Lfo},
                                   std::pair{&filter, RandomSection::Filter}})
@@ -1316,6 +1322,8 @@ juce::PopupMenu CyclesEmuEditor::viewMenu()
     juce::PopupMenu m;
     for (int i = 0; i < kNumThemes; ++i)
         m.addItem(juce::String("Colour: ") + kThemeNames[i], true, currentTheme() == i, [this, i] { setTheme(i); });
+    m.addSeparator();
+    m.addItem("Fanfare On Kit Save", true, fanfareOn(), [] { setFanfareOn(!fanfareOn()); });
     return m;
 }
 
@@ -1370,6 +1378,8 @@ void CyclesEmuEditor::chooseFile(bool kits, bool saving)
             const bool ok = writeTree(kits ? kitToTree(st) : trackToTree(st, track), f);
             status.setText(ok ? "Saved " + f.getFileName() : "Could not save " + f.getFileName(),
                            juce::dontSendNotification);
+            if (ok && kits)
+                playFanfare();
             return;
         }
         auto tree = readTree(f);

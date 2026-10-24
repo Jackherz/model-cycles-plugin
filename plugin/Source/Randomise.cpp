@@ -72,7 +72,6 @@ void randomise(juce::AudioProcessorValueTreeState& st, int t, RandomSection s, j
                 auto sample = [&] { return d.chance(0.85f) ? d.between(64, 127) : d.between(0, 63); };
                 set(st, t, "color", sample());
                 set(st, t, "twsamp2", sample());
-                set(st, t, "twdrive", d.chance(0.7f) ? 0 : d.between(10, 70));
                 set(st, t, "decay", d.between(70, 127));
             }
             return;

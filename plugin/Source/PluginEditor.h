@@ -34,6 +34,7 @@ public:
     void setLabel(const juce::String&);   // a new caption (knobs, toggles)
     void setItemText(int index, const juce::String&);   // a choice's entry, as shown
     juce::String itemText(int index) const;
+    juce::String shownText() const;   // what the closed list shows
     // a choice picked in the UI (not by the host, a preset or an undo)
     std::function<void(int)> onPicked;
     // how a knob shows its value, instead of the parameter's text
@@ -229,9 +230,9 @@ private:
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
     ParamControl* macroKnobs[5] = {};
-    // SP TWINSHOT's second page (Sample 2, Overdrive in the Color / Shape
-    // places), switched from the SOUND header, as the hardware's pages
-    ParamControl *twinSample2 = nullptr, *twinDrive = nullptr;
+    // SP TWINSHOT's second page (Sample 2, in Color's place), switched from
+    // the SOUND header, as the hardware's pages
+    ParamControl* twinSample2 = nullptr;
     juce::TextButton twinPage{"Page 1"};
     bool twinOnPage2 = false, twinMachine = false;
     void showTwinPage();

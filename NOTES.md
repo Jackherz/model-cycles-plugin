@@ -1595,8 +1595,11 @@ machines, on two pages.
     at `0x50000000` and the table, installed on the audio thread.
   - The folder is in the settings, set from Kit > "Twinshot Samples Folder…".
   - Machine 11 "SP Twinshot". Its knobs: Smp 1, Flt 1, Mix, Tune 2. Page 2
-    holds Smp 2 and Drive (`twsamp2`, `twdrive`, written with
-    `mc_engine_twin_param`).
+    holds Smp 2 (`twsamp2`, written with `mc_engine_twin_param`).
+    - Drive (Overdrive, slot 26) was dropped on 2026-10-24: Twinshot's update
+      (`0x400097dc`) reads slots 18-23 and 25, never 26. The Syntakt applies
+      overdrive outside the machine, so the knob did nothing; measured too.
+      Vol+Dist drives the track instead.
   - Sample 1 and 2 show the sample's name, with "<" when reversed (knob
     below 64).
 - **Check**: `scripts/twinshot_compare.py` against the Syntakt's own engine
@@ -1632,6 +1635,39 @@ one), then in the plugin, as the wet signal: EditorShot "fx engines" with
   - Tape now rolls off like the Cycles' delay: −86 dB at the top.
 - Levels are unchanged: within 0.3 dB of the Cycles' at the same settings.
 - Not changed: the Cycles' own delay and reverb.
+
+## Step 40: kit-save fanfare, help texts, Twinshot fixes (2026-10-24)
+
+- **Fanfare** (Jack: "a saved kit sound, like a fanfare"):
+  - `Fanfare.cpp` renders our own short chiptune tune: two polyBLEP pulse
+    voices, a triangle bass, noise hits, 2.4 s, -6 dBFS.
+  - It's written once to `fanfare-v1.wav` beside the settings, and played
+    with `/usr/bin/afplay` after a successful Save Kit As.
+  - It goes to the Mac's output, not the plugin's, so it stays out of the
+    DAW's mix and bounces.
+  - View > Fanfare On Kit Save turns it off (`fanfare` in the settings).
+- **Help** (Jack: Twinshot's help, and check every hover text):
+  - `helpFor` clamped the machine to 0-10, so SP Twinshot showed SY Swarm's
+    knob texts. Twinshot now has its own texts for Tune 1, Decay 1,
+    Sample 1, Filter 1, Mix, Tune 2 and Punch (unused), measured:
+    - Tune 1 and Tune 2: a semitone a step on their own sample, 40-88 =
+      two octaves either way. Played notes transpose both samples.
+    - Filter 1: on Sample 1 only. 64 is open, below is a low-pass (a thud
+      at 0), above a high-pass.
+    - Mix: a crossfade (0 Sample 1, 127 Sample 2).
+    - Decay 1: Sample 1's length (0 silent, 40 about 0.3 s, 127 all of it).
+      Sample 2 always plays out.
+  - The Sound Setup panel's controls each have a text now; only
+    Destination 1 had one. The Setup button's id is `soundsetup`.
+  - Note names follow Live's: Key Trk notes start at C2 (note 48), and
+    middle C (60) is C3.
+  - EditorShot "help" checks that every control with a help id has a
+    text on all 12 machines.
+- **Drive removed** from Twinshot's page 2: see step 38.
+- **LFO destination list**: after a machine change, the closed list kept the
+  old machine's name ("Freq Complex" on Twinshot). `ComboBox::setText`
+  dropped the selection. `setItemText` now reselects the item. EditorShot
+  checks the shown text.
 
 ## Next steps
 

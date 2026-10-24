@@ -2,7 +2,8 @@
 // (machines, Punch, Gate, FX). Its per-machine meaning of Color, Shape,
 // Sweep and Contour is not in the manual: those lines are approximate.
 // The Syntakt engines (machines 6-10) name their knobs after the Syntakt's
-// own parameters, as Modded-Cycles' guide maps them.
+// own parameters, as Modded-Cycles' guide maps them. SP TWINSHOT (11) has
+// texts of its own, measured on its code (NOTES.md steps 38, 40).
 // Write only characters the pixel font has (Retro.cpp): no quotes or
 // semicolons.
 #include "Help.h"
@@ -14,7 +15,24 @@ namespace cyclesemu
 namespace
 {
 const char* kMachines[] = {"Kick", "Snare", "Metal", "Perc", "Tone", "Chord",
-                           "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm"};
+                           "SD Vintage", "CP Vintage", "SY Toy", "SY Bits", "SY Swarm", "SP Twinshot"};
+
+// SP TWINSHOT: what each knob is on it (measured on the Syntakt's own engine)
+const std::map<juce::String, HelpText> kTwinshot = {
+    {"pitch", {"Tune 1", "Sample 1's tuning, a semitone a step, two octaves either way. Notes you play transpose "
+                         "both samples."}},
+    {"decay", {"Decay 1", "How long Sample 1 plays: 0 is silent, 40 a short hit, 127 the whole sample. Sample 2 "
+                          "always plays to its end."}},
+    {"color", {"Sample 1", "The first sample, from the Twinshot folder (Kit > Twinshot Samples Folder, up to 64 "
+                           "WAVs in name order). From the middle up the samples play forward, below the middle the "
+                           "same ones reversed (shown with <)."}},
+    {"shape", {"Filter 1", "A filter on Sample 1 only. 64 leaves it open, lower is a low-pass that darkens it "
+                           "down to a thud at 0, higher a high-pass that thins it out."}},
+    {"sweep", {"Mix", "The balance of the two samples: 0 Sample 1 alone, 64 both equally, 127 Sample 2 alone."}},
+    {"contour", {"Tune 2", "Sample 2's tuning, a semitone a step from 40 to 88 (64 as recorded): two octaves "
+                           "either way."}},
+    {"punch", {"Punch", "Not used on SP Twinshot."}},
+};
 
 // The Syntakt engines: the parameter each knob is (color, shape, sweep,
 // contour, punch), from Modded-Cycles' guide.
@@ -63,7 +81,8 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Machine",
       "The sound engine for this track. Kick, Snare, Metal, Perc, Tone and Chord are the Model:Cycles' own, six "
       "mappings of one FM engine. SD Vintage, CP Vintage, SY Toy, SY Bits and SY Swarm are the Syntakt's digital "
-      "engines, running its own code. The knobs change meaning with the machine."}},
+      "engines, running its own code, and SP Twinshot its two-sample player, with your own WAVs. The knobs change "
+      "meaning with the machine."}},
     {"pitch",
      {"Pitch", "Tuning in semitones around the programmed note. Notes you play transpose from here."}},
     {"decay", {"Decay", "How long the sound rings after each note. Low is a short blip, high a long ring."}},
@@ -153,20 +172,26 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Portamento Amount",
       "How much of the distance the glide covers: 100 glides all the way from the last note, 50 starts "
       "halfway there."}},
-    {"vm1dst",
+    {"soundsetup",
      {"Sound Setup: Velocity Mod and Key Tracking",
       "As the Syntakt's SOUND SETUP. VELOCITY MOD: up to four knobs that move with how hard a note is played, each by "
       "its depth (at full velocity the knob moves by the depth; negative depths move it the other way). KEY "
-      "TRACKING: the same with the note played, centred on middle C: depth 8 moves the knob a step per note, 127 "
-      "sixteen. VEL > VOL: how velocity sets the volume (Lin as played, Log brings soft notes up, Exp favours hard "
+      "TRACKING: the same with the note played, centred on middle C (C3 in Live): depth 8 moves the knob a step "
+      "per note, 127 sixteen. VEL > VOL: how velocity sets the volume (Lin as played, Log brings soft notes up, Exp favours hard "
       "ones, Off ignores it). FILT KEY: the filter follows the keyboard (127: fully)."}},
+    {"velvol",
+     {"Vel > Vol",
+      "How the velocity of a note sets its volume. Lin: as played. Log: soft notes come up, so the dynamics are "
+      "gentler. Exp: hard notes stand out more. Off: every note at full volume."}},
+    {"fkey",
+     {"Filter Keytrack",
+      "The filter cutoff follows the note played, centred on middle C (C3 in Live): at 127 it moves a semitone per "
+      "note, so the tone stays the same up the keyboard. 0: the cutoff stays put."}},
     {"twsamp2",
-     {"Twinshot: Sample 2",
-      "SP TWINSHOT plays two samples at once: Sample 1 (the first knob) and Sample 2, from the folder chosen in Kit > "
-      "Twinshot Samples Folder (up to 64 WAVs, in name order). From the middle up: the samples forward; below the "
-      "middle: the same samples reversed (shown with <). Mix balances the two, Tune 2 pitches the second, Filter 1 "
-      "colours the first."}},
-    {"twdrive", {"Twinshot: Overdrive", "Drives the two samples into saturation. 0 is clean."}},
+     {"Sample 2",
+      "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches): from the "
+      "folder chosen in Kit > Twinshot Samples Folder, forward from the middle up, reversed below it (shown with <). "
+      "Mix on page 1 balances the two, Tune 2 tunes this one."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "
@@ -199,7 +224,8 @@ const std::map<juce::String, HelpText> kHelp = {
     {"reverbtone", {"Reverb Tone", "The reverb's colour, from dark to bright."}},
     {"midimode",
      {"MIDI Mode",
-      "Drum Map: on any channel, C1 to F1 play tracks 1 to 6, and notes from C3 up play the Key Trk track. "
+      "Drum Map: on any channel, C1 to F1 play tracks 1 to 6, and notes from C2 up play the Key Trk track "
+      "(note names as Live shows them: middle C, note 60, is C3). "
       "Ch 1-6: MIDI channels 1 to 6 play tracks 1 to 6, as on the hardware."}},
     {"fxdelay", {"Delay Send", "How much of the input goes into the delay. Its return also feeds the reverb."}},
     {"fxreverb", {"Reverb Send", "How much of the input goes into the reverb."}},
@@ -212,7 +238,8 @@ const std::map<juce::String, HelpText> kHelp = {
       "CyclesVoice plays one sound on the six engine tracks as six voices. This sets how many it uses: 1 is "
       "mono (each note cuts the last), 6 lets chords and tails overlap. The oldest voice is reused first."}},
     {"keystrack",
-     {"Key Trk", "In Drum Map mode, the track that notes from C3 up play, chromatically."}},
+     {"Key Trk", "In Drum Map mode, the track that notes from C2 up play, chromatically (C1 to F1 play the six "
+                 "tracks)."}},
     {"followhost",
      {"Host Tempo",
       "On: the engine follows your DAW's tempo. Off: the Tempo knob sets it, even inside a DAW."}},
@@ -231,7 +258,10 @@ HelpText helpFor(const juce::String& id, int machine)
     auto bare = id;
     if (id.startsWith("fx_") || (id.length() > 3 && id[0] == 't' && id[2] == '_'))
         bare = id.substring(3);
-    machine = juce::jlimit(0, 10, machine);
+    machine = juce::jlimit(0, 11, machine);
+    if (machine == 11)
+        if (auto t = kTwinshot.find(bare); t != kTwinshot.end())
+            return t->second;
     const char* knobs[] = {"color", "shape", "sweep", "contour", "punch"};
     for (int k = 0; machine >= 6 && k < 5; ++k)
         if (bare == knobs[k])
@@ -245,6 +275,23 @@ HelpText helpFor(const juce::String& id, int machine)
         return {title, "A macro: one knob that moves several FM settings at once. On the " +
                            juce::String(kMachines[machine]) + " machine it sets " + m->second[(size_t)machine] +
                            " (Approximate: the manual does not spell these out.)"};
+    }
+    // the SOUND SETUP slots: Velocity Mod (vm) and Key Tracking (km), 1-4
+    if (bare.length() == 6 && (bare.startsWith("vm") || bare.startsWith("km")) && bare[2] >= '1' && bare[2] <= '4')
+    {
+        const bool vel = bare.startsWith("vm"), dest = bare.endsWith("dst");
+        const juce::String slot = juce::String::charToString(bare[2]);
+        if (dest)
+            return {(vel ? "Velocity Mod " : "Key Tracking ") + slot + ": Destination",
+                    vel ? "The knob this slot moves with how hard a note is played. Off: none. The slots add up when "
+                          "two pick the same knob."
+                        : "The knob this slot moves with the note played, up above middle C (C3 in Live) and down "
+                          "below. Off: none. The slots add up when two pick the same knob."};
+        return {(vel ? "Velocity Mod " : "Key Tracking ") + slot + ": Depth",
+                vel ? "How far the destination moves at full velocity, added to its knob: softer notes move it "
+                      "less. Negative depths move it down."
+                    : "How far the destination moves per note from middle C: 8 is a step a note, 127 sixteen. "
+                      "Negative depths move it the other way."};
     }
     if (auto h = kHelp.find(bare); h != kHelp.end())
         return h->second;
