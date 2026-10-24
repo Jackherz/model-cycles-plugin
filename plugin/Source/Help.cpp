@@ -29,8 +29,8 @@ const std::map<juce::String, HelpText> kTwinshot = {
     {"shape", {"Filter 1", "A filter on Sample 1 only. 64 leaves it open, lower is a low-pass that darkens it "
                            "down to a thud at 0, higher a high-pass that thins it out."}},
     {"sweep", {"Mix", "The balance of the two samples: 0 Sample 1 alone, 64 both equally, 127 Sample 2 alone."}},
-    {"contour", {"Tune 2", "Sample 2's tuning, a semitone a step from 40 to 88 (64 as recorded): two octaves "
-                           "either way."}},
+    {"contour", {"Tune 2", "On page 2: Sample 2's tuning, a semitone a step from 40 to 88 (64 as recorded): "
+                           "two octaves either way."}},
     {"punch", {"Punch", "Not used on SP Twinshot."}},
 };
 
@@ -191,7 +191,7 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Sample 2",
       "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches): from the "
       "folder chosen in Kit > Twinshot Samples Folder, forward from the middle up, reversed below it (shown with <). "
-      "Mix on page 1 balances the two, Tune 2 tunes this one."}},
+      "Tune 2 beside it tunes it, Mix on page 1 balances the two."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

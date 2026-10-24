@@ -717,13 +717,15 @@ void ModPanel::resized()
     controls[17]->setBounds(o.removeFromTop(juce::jmin(112, o.getHeight())));
 }
 
-// SP TWINSHOT's page 1 (the macro knobs as Sample 1, Filter 1, Mix, Tune 2)
-// or page 2 (Sample 2 in Color's place); other machines: page 1
+// SP TWINSHOT's page 1 (the macro knobs as Sample 1, Filter 1, Mix) or page
+// 2 (Sample 2, and Contour as Tune 2: each sample's knobs on its page); other
+// machines: Color .. Contour
 void TrackPage::showTwinPage()
 {
     const bool p2 = twinMachine && twinOnPage2;
-    for (int i = 0; i < 4; ++i)   // Color .. Contour
+    for (int i = 0; i < 3; ++i)   // Color .. Sweep
         macroKnobs[i]->setVisible(!p2);
+    macroKnobs[3]->setVisible(!twinMachine || p2);   // Contour, Tune 2 on Twinshot's page 2
     twinSample2->setVisible(p2);
     twinPage.setVisible(twinMachine);
     twinPage.setButtonText(p2 ? "Page 2" : "Page 1");
@@ -768,7 +770,7 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     twinSample2 = make(st, t, "twsamp2", "Smp 2", S::Knob);
     twinSample2->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
     sound.addRow({make(st, t, "pitch", "Pitch", S::Knob), make(st, t, "decay", "Decay", S::Knob), color, shape,
-                  sweep, contour, twinSample2});
+                  sweep, twinSample2, contour});   // (page 2: Sample 2 before Tune 2)
     twinSample2->setVisible(false);
     sound.minColumns = 6;   // the knobs one size on either Twinshot page
     twinPage.onClick = [this] {

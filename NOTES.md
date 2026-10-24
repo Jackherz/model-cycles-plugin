@@ -1594,8 +1594,9 @@ machines, on two pages.
     to 48 kHz with a windowed sinc), cached per process. It writes the data
     at `0x50000000` and the table, installed on the audio thread.
   - The folder is in the settings, set from Kit > "Twinshot Samples Folder…".
-  - Machine 11 "SP Twinshot". Its knobs: Smp 1, Flt 1, Mix, Tune 2. Page 2
-    holds Smp 2 (`twsamp2`, written with `mc_engine_twin_param`).
+  - Machine 11 "SP Twinshot". Page 1: Smp 1, Flt 1, Mix. Page 2: Smp 2
+    (`twsamp2`, written with `mc_engine_twin_param`) and Tune 2 (the Contour
+    knob), each sample's knobs on its page (Jack, 2026-10-24).
     - Drive (Overdrive, slot 26) was dropped on 2026-10-24: Twinshot's update
       (`0x400097dc`) reads slots 18-23 and 25, never 26. The Syntakt applies
       overdrive outside the machine, so the knob did nothing; measured too.
