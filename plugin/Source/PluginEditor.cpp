@@ -1203,30 +1203,34 @@ void MenuStrip::mouseDown(const juce::MouseEvent& e)
         }
 }
 
+// SP TWINSHOT's samples: a folder of up to 64 WAVs (in name order), from the
+// Kit menu (the Voice menu in CyclesVoice)
+void CyclesEmuEditor::chooseTwinFolder()
+{
+    chooser = std::make_unique<juce::FileChooser>("Twinshot samples: a folder of WAVs (up to 64, in name order)",
+                                                  proc.twinSamples().folder);
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                         [this](const juce::FileChooser& fc) {
+                             const auto dir = fc.getResult();
+                             if (!dir.isDirectory())
+                                 return;
+                             const int n = proc.loadTwinFolder(dir);
+                             status.setText(n < 0 ? juce::String("Twinshot: still loading the last folder")
+                                                  : "Twinshot: " + juce::String(n) + " samples from " + dir.getFileName(),
+                                            juce::dontSendNotification);
+                             juce::Timer::callAfterDelay(200, [safe = juce::Component::SafePointer<CyclesEmuEditor>(this)] {
+                                 if (safe != nullptr)
+                                     for (auto* p : safe->pages)
+                                         if (auto* tp = dynamic_cast<TrackPage*>(p))
+                                             tp->refreshTwinNames();
+                             });
+                         });
+}
+
 juce::PopupMenu CyclesEmuEditor::kitMenu()
 {
     juce::PopupMenu m;
-    // SP TWINSHOT's samples: a folder of up to 64 WAVs (in name order)
-    m.addItem("Twinshot Samples Folder...", [this] {
-        chooser = std::make_unique<juce::FileChooser>("Twinshot samples: a folder of WAVs (up to 64, in name order)",
-                                                      proc.twinSamples().folder);
-        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                             [this](const juce::FileChooser& fc) {
-                                 const auto dir = fc.getResult();
-                                 if (!dir.isDirectory())
-                                     return;
-                                 const int n = proc.loadTwinFolder(dir);
-                                 status.setText(n < 0 ? juce::String("Twinshot: still loading the last folder")
-                                                      : "Twinshot: " + juce::String(n) + " samples from " + dir.getFileName(),
-                                                juce::dontSendNotification);
-                                 juce::Timer::callAfterDelay(200, [safe = juce::Component::SafePointer<CyclesEmuEditor>(this)] {
-                                     if (safe != nullptr)
-                                         for (auto* p : safe->pages)
-                                             if (auto* tp = dynamic_cast<TrackPage*>(p))
-                                                 tp->refreshTwinNames();
-                                 });
-                             });
-    });
+    m.addItem("Twinshot Samples Folder...", [this] { chooseTwinFolder(); });
     m.addSeparator();
     m.addItem(undoWhat.isEmpty() ? juce::String("Undo") : "Undo " + undoWhat, undoKit.isValid(), false, [this] {
         auto redo = kitToTree(proc.state());
@@ -1266,6 +1270,8 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
             undoKit = redo;
             undoWhat = "Undo";
         });
+        m.addSeparator();
+        m.addItem("Twinshot Samples Folder...", [this] { chooseTwinFolder(); });
         m.addSeparator();
     }
     m.addItem("Load " + what + "...", track, false, [this] { chooseFile(false, false); });

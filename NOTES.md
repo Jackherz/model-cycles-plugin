@@ -1670,6 +1670,29 @@ one), then in the plugin, as the wet signal: EditorShot "fx engines" with
   dropped the selection. `setItemText` now reselects the item. EditorShot
   checks the shown text.
 
+## Step 41: CyclesVoice's Twinshot folder; the freeze (2026-10-24)
+
+- CyclesVoice's Voice menu has "Twinshot Samples Folder..." too. Before,
+  only CyclesEmu's Kit menu set it. The folder is one setting shared by
+  every instance (`twinFolder`).
+- **Freeze** (Jack's decision, 2026-10-24): CyclesEmu stays as it is, a
+  personal emulation, tagged `v1.0`.
+  - Everything firmware-derived stays personal use and never goes in the
+    repo: the translated render, the engine states, the Syntakt machines,
+    Modded-Cycles' work.
+  - Next is an instrument of our own: our own engine and name, with nothing
+    from the firmware.
+  - What carries over:
+    - the plugin shell: parameters, presets, randomise, undo, help, themes,
+      tests;
+    - our LFO, glide, modulation, filters and combs (fitted from
+      measurements);
+    - the MIT effects, credited.
+  - The emulation becomes its test bench: play the same MIDI through both
+    and compare.
+  - A new engine is built from measured behaviour (written up as a spec),
+    never from firmware tables or code.
+
 ## Next steps
 
 

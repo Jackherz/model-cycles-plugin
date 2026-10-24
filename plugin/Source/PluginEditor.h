@@ -341,6 +341,7 @@ private:
     void timerCallback() override;
     void setHelpMode(bool on);
     juce::PopupMenu kitMenu(), trackMenu(), viewMenu(), helpMenu();
+    void chooseTwinFolder();
     void setTheme(int index);
     void chooseFile(bool kits, bool saving);
     void randomiseTrack(cyclesemu::RandomSection, bool variation);

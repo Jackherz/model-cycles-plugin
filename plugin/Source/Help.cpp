@@ -23,7 +23,7 @@ const std::map<juce::String, HelpText> kTwinshot = {
                          "both samples."}},
     {"decay", {"Decay 1", "How long Sample 1 plays: 0 is silent, 40 a short hit, 127 the whole sample. Sample 2 "
                           "always plays to its end."}},
-    {"color", {"Sample 1", "The first sample, from the Twinshot folder (Kit > Twinshot Samples Folder, up to 64 "
+    {"color", {"Sample 1", "The first sample, from the Twinshot folder (Kit menu (Voice in CyclesVoice) > Twinshot Samples Folder, up to 64 "
                            "WAVs in name order). From the middle up the samples play forward, below the middle the "
                            "same ones reversed (shown with <)."}},
     {"shape", {"Filter 1", "A filter on Sample 1 only. 64 leaves it open, lower is a low-pass that darkens it "
@@ -190,7 +190,7 @@ const std::map<juce::String, HelpText> kHelp = {
     {"twsamp2",
      {"Sample 2",
       "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches): from the "
-      "folder chosen in Kit > Twinshot Samples Folder, forward from the middle up, reversed below it (shown with <). "
+      "folder chosen in Kit menu (Voice in CyclesVoice) > Twinshot Samples Folder, forward from the middle up, reversed below it (shown with <). "
       "Tune 2 beside it tunes it, Mix on page 1 balances the two."}},
     {"dice",
      {"Randomise",
