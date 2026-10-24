@@ -1670,6 +1670,22 @@ one), then in the plugin, as the wet signal: EditorShot "fx engines" with
   dropped the selection. `setItemText` now reselects the item. EditorShot
   checks the shown text.
 
+## Step 42: Twinshot from a whole sample library (2026-10-24)
+
+Jack: use any samples folder; with too many files take as many as fit, with
+an option to randomise the pick.
+- The folder is read with its subfolders (WAV and AIFF, hidden files and
+  "._" skipped; the first 20000 files seen), in name order by path.
+- More than 64: Twinshot Samples (Kit menu, Voice menu in CyclesVoice) >
+  First 64 By Name, or Random 64. Pick Another Random 64 draws a new seed.
+  The pick is put back in name order.
+- Settings: `twinFolder`, `twinRandom`, `twinSeed`, shared by every
+  instance (one opened later takes them too).
+- A sound remembers a slot, not a file: a new folder or pick changes what
+  it plays (the help says so).
+- EditorShot "twinshot library": 100 WAVs in subfolders, 64 taken; a seed
+  gives the same pick, another seed another.
+
 ## Step 41: CyclesVoice's Twinshot folder; the freeze (2026-10-24)
 
 - CyclesVoice's Voice menu has "Twinshot Samples Folder..." too. Before,

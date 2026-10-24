@@ -1207,30 +1207,55 @@ void MenuStrip::mouseDown(const juce::MouseEvent& e)
 // Kit menu (the Voice menu in CyclesVoice)
 void CyclesEmuEditor::chooseTwinFolder()
 {
-    chooser = std::make_unique<juce::FileChooser>("Twinshot samples: a folder of WAVs (up to 64, in name order)",
+    chooser = std::make_unique<juce::FileChooser>("Twinshot samples: a folder of WAVs or AIFFs (subfolders too)",
                                                   proc.twinSamples().folder);
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                          [this](const juce::FileChooser& fc) {
                              const auto dir = fc.getResult();
-                             if (!dir.isDirectory())
-                                 return;
-                             const int n = proc.loadTwinFolder(dir);
-                             status.setText(n < 0 ? juce::String("Twinshot: still loading the last folder")
-                                                  : "Twinshot: " + juce::String(n) + " samples from " + dir.getFileName(),
-                                            juce::dontSendNotification);
-                             juce::Timer::callAfterDelay(200, [safe = juce::Component::SafePointer<CyclesEmuEditor>(this)] {
-                                 if (safe != nullptr)
-                                     for (auto* p : safe->pages)
-                                         if (auto* tp = dynamic_cast<TrackPage*>(p))
-                                             tp->refreshTwinNames();
-                             });
+                             if (dir.isDirectory())
+                                 twinLoaded(proc.loadTwinFolder(dir));
                          });
+}
+
+void CyclesEmuEditor::twinLoaded(int n)
+{
+    const auto& t = proc.twinSamples();
+    status.setText(n < 0 ? juce::String("Twinshot: still loading the last folder")
+                         : "Twinshot: " + juce::String(n) + (t.found() > n ? " of " + juce::String(t.found()) : juce::String())
+                               + " samples from " + t.folder.getFileName()
+                               + (t.found() > kTwinSlots && proc.twinPick().random ? " (a random pick)" : ""),
+                   juce::dontSendNotification);
+    juce::Timer::callAfterDelay(200, [safe = juce::Component::SafePointer<CyclesEmuEditor>(this)] {
+        if (safe != nullptr)
+            for (auto* p : safe->pages)
+                if (auto* tp = dynamic_cast<TrackPage*>(p))
+                    tp->refreshTwinNames();
+    });
+}
+
+// SP TWINSHOT's samples: the folder (and its subfolders), and when it holds
+// more than the 64 slots, which 64
+juce::PopupMenu CyclesEmuEditor::twinMenu()
+{
+    juce::PopupMenu m;
+    const auto& t = proc.twinSamples();
+    const bool random = proc.twinPick().random, more = t.found() > kTwinSlots;
+    m.addItem("Choose Folder...", [this] { chooseTwinFolder(); });
+    m.addSeparator();
+    m.addItem(t.folder.isDirectory() ? juce::String(t.count()) + (more ? " of " + juce::String(t.found()) : juce::String())
+                                           + " samples: " + t.folder.getFileName()
+                                     : juce::String("No folder chosen"),
+              false, false, nullptr);
+    m.addItem("First 64 By Name", true, !random, [this] { twinLoaded(proc.setTwinPick(false, false)); });
+    m.addItem("Random 64", true, random, [this] { twinLoaded(proc.setTwinPick(true, false)); });
+    m.addItem("Pick Another Random 64", more, false, [this] { twinLoaded(proc.setTwinPick(true, true)); });
+    return m;
 }
 
 juce::PopupMenu CyclesEmuEditor::kitMenu()
 {
     juce::PopupMenu m;
-    m.addItem("Twinshot Samples Folder...", [this] { chooseTwinFolder(); });
+    m.addSubMenu("Twinshot Samples", twinMenu());
     m.addSeparator();
     m.addItem(undoWhat.isEmpty() ? juce::String("Undo") : "Undo " + undoWhat, undoKit.isValid(), false, [this] {
         auto redo = kitToTree(proc.state());
@@ -1271,7 +1296,7 @@ juce::PopupMenu CyclesEmuEditor::trackMenu()
             undoWhat = "Undo";
         });
         m.addSeparator();
-        m.addItem("Twinshot Samples Folder...", [this] { chooseTwinFolder(); });
+        m.addSubMenu("Twinshot Samples", twinMenu());
         m.addSeparator();
     }
     m.addItem("Load " + what + "...", track, false, [this] { chooseFile(false, false); });

@@ -149,10 +149,14 @@ public:
     int peek(uint32_t addr) const { return mc_engine_peek(engine, addr); }
     void setSmoothFilter(bool on) { mc_engine_set_smooth_filter(engine, on); }
     void createFxEnginesNow() { handleAsyncUpdate(); }   // tests: no message loop
-    // SP TWINSHOT's sample bank (TwinSamples.h): a folder of up to 64 WAVs,
-    // remembered in the settings. Load on the message thread; the engine
-    // takes it at its next block.
+    // SP TWINSHOT's sample bank (TwinSamples.h): 64 samples from a folder,
+    // the folder and how they're picked remembered in the settings (instances
+    // opened after take them too). Load on the message thread; the engine takes it at its
+    // next block. -1: the last one isn't in yet.
     int loadTwinFolder(const juce::File& folder);
+    // first 64 by name, or a random 64 (newPick: another random 64)
+    int setTwinPick(bool random, bool newPick);
+    static cyclesemu::TwinSamples::Pick twinPick();
     const cyclesemu::TwinSamples& twinSamples() const { return *twin; }
     bool twinInstalled() const { return !twinPending.load(); }
     void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }

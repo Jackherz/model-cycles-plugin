@@ -342,6 +342,8 @@ private:
     void setHelpMode(bool on);
     juce::PopupMenu kitMenu(), trackMenu(), viewMenu(), helpMenu();
     void chooseTwinFolder();
+    juce::PopupMenu twinMenu();   // the samples SP TWINSHOT plays
+    void twinLoaded(int n);       // the status line, the Sample knobs' names
     void setTheme(int index);
     void chooseFile(bool kits, bool saving);
     void randomiseTrack(cyclesemu::RandomSection, bool variation);

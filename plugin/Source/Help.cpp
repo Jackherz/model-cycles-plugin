@@ -23,9 +23,11 @@ const std::map<juce::String, HelpText> kTwinshot = {
                          "both samples."}},
     {"decay", {"Decay 1", "How long Sample 1 plays: 0 is silent, 40 a short hit, 127 the whole sample. Sample 2 "
                           "always plays to its end."}},
-    {"color", {"Sample 1", "The first sample, from the Twinshot folder (Kit menu (Voice in CyclesVoice) > Twinshot Samples Folder, up to 64 "
-                           "WAVs in name order). From the middle up the samples play forward, below the middle the "
-                           "same ones reversed (shown with <)."}},
+    {"color", {"Sample 1", "The first sample, one of 64 from your Twinshot folder: Twinshot Samples in the Kit menu "
+                           "(the Voice menu in CyclesVoice) chooses the folder, subfolders included, and with more than "
+                           "64 files there, the first 64 by name or a random 64. From the middle up the samples play "
+                           "forward, below the middle the same ones reversed (shown with <). A sound remembers a slot, "
+                           "not a file: a new folder or pick changes what it plays."}},
     {"shape", {"Filter 1", "A filter on Sample 1 only. 64 leaves it open, lower is a low-pass that darkens it "
                            "down to a thud at 0, higher a high-pass that thins it out."}},
     {"sweep", {"Mix", "The balance of the two samples: 0 Sample 1 alone, 64 both equally, 127 Sample 2 alone."}},
@@ -189,9 +191,9 @@ const std::map<juce::String, HelpText> kHelp = {
       "note, so the tone stays the same up the keyboard. 0: the cutoff stays put."}},
     {"twsamp2",
      {"Sample 2",
-      "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches): from the "
-      "folder chosen in Kit menu (Voice in CyclesVoice) > Twinshot Samples Folder, forward from the middle up, reversed below it (shown with <). "
-      "Tune 2 beside it tunes it, Mix on page 1 balances the two."}},
+      "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches), from the "
+      "same 64 as Sample 1 (Twinshot Samples in the Kit or Voice menu): forward from the middle up, reversed below it "
+      "(shown with <). Tune 2 beside it tunes it, Mix on page 1 balances the two."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

@@ -16,37 +16,58 @@ void be32(uint8_t* p, uint32_t v)
 }
 } // namespace
 
-int TwinSamples::loadFolder(const juce::File& dir)
+int TwinSamples::loadFolder(const juce::File& dir, Pick pick)
 {
     folder = dir;
-    bank = read(dir);
+    bank = read(dir, pick);
     return count();
 }
 
-std::shared_ptr<const TwinSamples::Bank> TwinSamples::read(const juce::File& dir)
+std::shared_ptr<const TwinSamples::Bank> TwinSamples::read(const juce::File& dir, Pick pick)
 {
     auto out = std::make_shared<Bank>();
     if (!dir.isDirectory())
         return out;
+    // the folder and its subfolders (a library: the first 20000 files seen)
     juce::Array<juce::File> files;
-    for (const auto& f : dir.findChildFiles(juce::File::findFiles, false, "*.wav;*.aif;*.aiff"))
-        if (!f.getFileName().startsWith("."))
+    for (const auto& entry : juce::RangedDirectoryIterator(dir, true, "*.wav;*.aif;*.aiff",
+                                                           juce::File::findFiles | juce::File::ignoreHiddenFiles))
+    {
+        const auto& f = entry.getFile();
+        if (!f.getFileName().startsWith("."))   // macOS's "._" companions too
             files.add(f);
-    // name order, numbers in names counted as numbers (TRANSIENT 2 before 10)
+        if (files.size() >= 20000)
+            break;
+    }
+    // name order, by the path within the folder; numbers in names counted
+    // as numbers (TRANSIENT 2 before 10)
     struct Natural
     {
-        static int compareElements(const juce::File& a, const juce::File& b)
+        juce::File root;
+        int compareElements(const juce::File& a, const juce::File& b) const
         {
-            return a.getFileName().compareNatural(b.getFileName());
+            return a.getRelativePathFrom(root).compareNatural(b.getRelativePathFrom(root));
         }
-    } order;
+    } order{dir};
     files.sort(order);
-    while (files.size() > kTwinSlots)
-        files.removeLast();
+    const int found = files.size();
+    if (files.size() > kTwinSlots)
+    {
+        if (pick.random)   // 64 at random, then back in name order
+        {
+            juce::Random rng(pick.seed);
+            for (int i = files.size() - 1; i > 0; --i)
+                files.swap(i, rng.nextInt(i + 1));
+            files.removeRange(kTwinSlots, files.size());
+            files.sort(order);
+        }
+        else
+            files.removeRange(kTwinSlots, files.size());
+    }
     // the same folder, unchanged: the bank already read
-    juce::String key = dir.getFullPathName();
+    juce::String key = dir.getFullPathName() + ":" + juce::String(found);
     for (const auto& f : files)
-        key << "|" << f.getFileName() << ":" << f.getLastModificationTime().toMilliseconds() << ":" << f.getSize();
+        key << "|" << f.getRelativePathFrom(dir) << ":" << f.getLastModificationTime().toMilliseconds() << ":" << f.getSize();
     static std::mutex lock;
     static std::map<juce::String, std::weak_ptr<const Bank>> cache;
     {
@@ -54,6 +75,7 @@ std::shared_ptr<const TwinSamples::Bank> TwinSamples::read(const juce::File& dir
         if (auto hit = cache[key].lock())
             return hit;
     }
+    out->found = found;
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     for (const auto& f : files)

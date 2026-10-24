@@ -7,6 +7,7 @@
 #include "../Source/PluginEditor.h"
 #include "../Source/Fanfare.h"
 #include "../Source/Help.h"
+#include "../Source/TwinSamples.h"
 #include <map>
 
 int main(int argc, char** argv)
@@ -1112,6 +1113,45 @@ int main(int argc, char** argv)
         const float none = ratio(0), full = ratio(127);
         std::printf("filter keytrack: C7 over C5 through a low LP: keytrack 0 %.3f, 127 %.3f -> %s\n", none, full,
                     full > none * 4 ? "PASS" : "FAIL");
+    }
+
+    // a sample library for SP TWINSHOT: 100 short WAVs in subfolders; 64
+    // are taken, the first by name or a random pick, the same for a seed
+    {
+        auto lib = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("cyem-twin-library");
+        lib.deleteRecursively();
+        juce::WavAudioFormat wav;
+        for (int i = 0; i < 100; ++i)
+        {
+            auto f = lib.getChildFile(i < 50 ? "Kicks" : "Snares/More").getChildFile("hit " + juce::String(i) + ".wav");
+            f.getParentDirectory().createDirectory();
+            auto os = std::make_unique<juce::FileOutputStream>(f);
+            std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(os.get(), 44100, 1, 16, {}, 0));
+            os.release();
+            juce::AudioBuffer<float> b(1, 441);
+            for (int k = 0; k < 441; ++k)
+                b.setSample(0, k, 0.5f * std::sin(0.05f * (float)(k * (i + 1))));
+            w->writeFromAudioSampleBuffer(b, 0, 441);
+        }
+        lib.getChildFile(".hidden.wav").create();
+        cyclesemu::TwinSamples first, r1, r1again, r2;
+        const int n = first.loadFolder(lib);
+        r1.loadFolder(lib, {true, 7});
+        r1again.loadFolder(lib, {true, 7});
+        r2.loadFolder(lib, {true, 8});
+        auto names = [](const cyclesemu::TwinSamples& t) {
+            juce::StringArray a;
+            for (int i = 0; i < t.count(); ++i)
+                a.add(t.name(i));
+            return a.joinIntoString(",");
+        };
+        const bool ok = n == 64 && first.found() == 100 && first.name(0) == "hit 0" && first.name(1) == "hit 1"
+                        && first.name(63) == "hit 63" && r1.count() == 64 && names(r1) == names(r1again)
+                        && names(r1) != names(r2) && names(r1) != names(first);
+        std::printf("twinshot library: %d of %d files (subfolders), first %s..%s; random picks 64, the same for a seed, "
+                    "another for another -> %s\n", n, first.found(), first.name(0).toRawUTF8(), first.name(63).toRawUTF8(),
+                    ok ? "PASS" : "FAIL");
+        lib.deleteRecursively();
     }
 
     // the kit-saved fanfare: plays, finite, at -6 dBFS, about 2 s

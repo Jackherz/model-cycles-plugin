@@ -405,7 +405,7 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
             applyAll(*s.def, s.track, s.lastParam);
     if (engine != nullptr)   // the samples Twinshot plays, from the folder last chosen
     {
-        if (twin->loadFolder(juce::File(settings().getValue("twinFolder"))) > 0)
+        if (twin->loadFolder(juce::File(settings().getValue("twinFolder")), twinPick()) > 0)
             twin->install(engine);
     }
     if (engine != nullptr && isVoice())   // and one sound on every voice from the start
@@ -473,6 +473,22 @@ void CyclesEmuProcessor::resetTrack(int t)
 
 void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
 
+TwinSamples::Pick CyclesEmuProcessor::twinPick()
+{
+    return {settings().getBoolValue("twinRandom", false), settings().getIntValue("twinSeed", 1)};
+}
+
+int CyclesEmuProcessor::setTwinPick(bool random, bool newPick)
+{
+    if (twinPending.load())
+        return -1;
+    settings().setValue("twinRandom", random);
+    if (newPick)
+        settings().setValue("twinSeed", juce::Random::getSystemRandom().nextInt(1 << 30) + 1);
+    settings().saveIfNeeded();
+    return loadTwinFolder(twin->folder);
+}
+
 // SP TWINSHOT's samples: read here (message thread), installed by the audio
 // thread at its next block (renderEngineBlock), or now if it isn't running
 int CyclesEmuProcessor::loadTwinFolder(const juce::File& folder)
@@ -480,7 +496,7 @@ int CyclesEmuProcessor::loadTwinFolder(const juce::File& folder)
     if (twinPending.load())
         return -1;   // the last one isn't in yet
     auto next = std::make_unique<TwinSamples>();
-    const int n = next->loadFolder(folder);
+    const int n = next->loadFolder(folder, twinPick());
     settings().setValue("twinFolder", folder.getFullPathName());
     settings().saveIfNeeded();
     if (!isPrepared)
