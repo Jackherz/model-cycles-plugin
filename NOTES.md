@@ -1721,6 +1721,11 @@ pieces were rebuilt:
   - macOS writes `._*` companion files. They are ignored in
     `.git/info/exclude`; run `find . -name "._*" -delete` before git and
     builds. Also `git config core.fileMode false`.
+  - **Build the plugin on the internal disk**:
+    `cmake -S plugin -B ~/.cache/cyclesemu/plugin-build`. A build on the
+    T7 copied `._` files into the installed bundles, which broke their
+    code signatures (`codesign -v`: "code has no resources but signature
+    indicates they must be present").
 - **Firmware:** Model:Cycles 1.13 from digiemu's cache
   (`~/Library/Application Support/digiemu/firmware/mc-1.13-44fe5862/`), and
   Syntakt 1.42 (`ded3c59f…`, the same file as before).
@@ -1735,7 +1740,11 @@ pieces were rebuilt:
   - The new capture differs from the old one (another moment of the run).
     Both work with the engine; levels within about 0.4 dB.
   - Translation: the same 16681 instructions, 2980 labels.
-  - Replay: 200/200 bit-exact. Tests: EditorShot 29, HostTest 8; CPU 6.1%.
+  - Replay: 200/200 bit-exact. Tests: EditorShot 29, HostTest 8,
+    LoadTest 11, auval x3; CPU 6.1%.
+  - Installed with the new state (`state`, also kept as
+    `state-syntakt7-r2`); the 2026-10-23 one stays as
+    `state-syntakt7-filter`.
 - **Rebuild kit:** `~/Library/Application Support/CyclesEmu/rebuild-kit/`
   (55 MB): both firmware files, the built OS, the tweak JSON,
   `aot-build-sttw/render.c`, and `data-sttw/` (aot-state, devices,
