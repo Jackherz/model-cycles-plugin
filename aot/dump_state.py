@@ -26,7 +26,7 @@ def main():
         for b, e, data in base:
             f.write(struct.pack('<II', b, len(data)))
             f.write(data)
-    cpu = Aot().cpu_from_context(calls[0]['ctx'])
+    cpu = Aot(need_lib=False).cpu_from_context(calls[0]['ctx'])
     phase = next(i for i in (0, 1) if any((a, v) == (0xfc045640, RING_HALVES[i])
                                           for a, _, v in calls[0]['mmio_r']))
     counter = int.from_bytes(calls[0]['isr'][4:8], 'big')

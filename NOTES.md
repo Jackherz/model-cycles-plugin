@@ -1709,6 +1709,39 @@ an option to randomise the pick.
   - A new engine is built from measured behaviour (written up as a spec),
     never from firmware tables or code.
 
+## Step 43: restored after the project folder was lost (2026-10-30)
+
+The folder was deleted. Everything committed came back from GitHub
+(Jackherz/model-cycles-plugin, private). The git-ignored, firmware-derived
+pieces were rebuilt:
+- **Where:** now `/Volumes/T7 Shield/AI Plug Ins/Cyclesemu`, an exFAT drive:
+  - No symlinks, so Python environments live on the internal disk:
+    `export UV_PROJECT_ENVIRONMENT=$HOME/.cache/cyclesemu/digiemu-venv`
+    before any `uv run` in `re/digiemu`.
+  - macOS writes `._*` companion files. They are ignored in
+    `.git/info/exclude`; run `find . -name "._*" -delete` before git and
+    builds. Also `git config core.fileMode false`.
+- **Firmware:** Model:Cycles 1.13 from digiemu's cache
+  (`~/Library/Application Support/digiemu/firmware/mc-1.13-44fe5862/`), and
+  Syntakt 1.42 (`ded3c59f…`, the same file as before).
+- **digiemu** at f57c2f2, with `uv sync`, the patched Unicorn
+  (`tools/install-patched-unicorn.sh`, a stub `pkg-config` on PATH) and numpy.
+- **Modded-Cycles** at 2594419 (2026-10-19, still its latest). Our changes
+  now live in the repo: `git -C re/modded-cycles apply
+  ../../patches/modded-cycles-cyclesemu.patch`. They were rebuilt from the
+  session transcripts, and the OS came out byte-identical (`69bc2479…`).
+- **Pipeline:** `aot/dump_state.py` no longer needs an earlier translated
+  build (`Aot(need_lib=False)`); a from-scratch rebuild stopped there.
+  - The new capture differs from the old one (another moment of the run).
+    Both work with the engine; levels within about 0.4 dB.
+  - Translation: the same 16681 instructions, 2980 labels.
+  - Replay: 200/200 bit-exact. Tests: EditorShot 29, HostTest 8; CPU 6.1%.
+- **Rebuild kit:** `~/Library/Application Support/CyclesEmu/rebuild-kit/`
+  (55 MB): both firmware files, the built OS, the tweak JSON,
+  `aot-build-sttw/render.c`, and `data-sttw/` (aot-state, devices,
+  coverage.json). From there, the plugin builds without the hour-long
+  pipeline.
+
 ## Next steps
 
 

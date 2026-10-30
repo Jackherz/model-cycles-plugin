@@ -41,7 +41,12 @@ class MmioRec(C.Structure):
 
 
 class Aot:
-    def __init__(self, lib=os.environ.get('MC_RENDER_LIB') or os.path.join(P, 'aot', 'build', 'libmcrender.dylib')):
+    def __init__(self, lib=os.environ.get('MC_RENDER_LIB') or os.path.join(P, 'aot', 'build', 'libmcrender.dylib'),
+                 need_lib=True):
+        self.uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
+        self.uc.ctl_set_cpu_model(UC_CPU_M68K_CFV4E)
+        if not need_lib:   # cpu_from_context only (dump_state: no translated build yet)
+            return
         self.lib = L = C.CDLL(lib)
         L.mc_ctx_new.restype = C.c_void_p
         L.mc_run.argtypes = [C.c_void_p, C.POINTER(Cpu), C.c_uint32, C.c_uint32]
@@ -55,8 +60,6 @@ class Aot:
         self.x = L.mc_ctx_new()
         if not self.x:
             raise SystemExit('mc_ctx_new failed')
-        self.uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
-        self.uc.ctl_set_cpu_model(UC_CPU_M68K_CFV4E)
 
     def write(self, addr, data):
         self.lib.mc_mem_write(self.x, addr, bytes(data), len(data))
