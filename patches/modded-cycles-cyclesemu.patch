@@ -1,0 +1,118 @@
+# Modded-Cycles 2594419 (2026-10-19) + CyclesEmu's SP TWINSHOT changes (NOTES steps 38, 40).
+# Apply: git -C re/modded-cycles apply ../../patches/modded-cycles-cyclesemu.patch
+diff --git a/tools/gen_syntakt_engines.py b/tools/gen_syntakt_engines.py
+index d5f2a2f..89f17eb 100644
+--- a/tools/gen_syntakt_engines.py
++++ b/tools/gen_syntakt_engines.py
+@@ -14,6 +14,7 @@ sdvintage-7th et syntakt-vintage restent disponibles avec build.py.
+     python3 tools/gen_syntakt_engines.py --cycles … --syntakt … --all [--check]   # toutes les autres combinaisons
+ """
+ import argparse
++import os
+ import itertools
+ import json
+ import pathlib
+@@ -80,6 +81,20 @@ CATALOG = {
+                          ("Osc Mix", "MIX", 127)), punch_off=2, punch_on=1,
+                   code_end=0x400097dc, tables_high=((0x4003ee38, 0x40040038),),
+                   imm={0x80009c58, 0x80009cec, 0x80009d80, 0x80009e14}),
++    # (CyclesEmu, 2026-10-23) type 44, SP TWINSHOT : moteur 11 (tables 0x400148f0 / 0x40014920). Descripteurs
++    # « SAMP » (OS 1.42 : 0x40233928.., pas 0x34) : Tune 1 (18, 40..88), Sample 1 (19), Filter 1 (20), Mix (21),
++    # Tune 2 (22, 40..88), Sample 2 (23, défaut 65), Decay 1 (25, défaut 127), Overdrive (26). Les échantillons :
++    # table de 64 entrées {longueur, pointeur} en 0x4404f754 (fenêtre du BSS), remplie par le plugin (la console
++    # du Syntakt l'envoie au démarrage). Sample 2 et Overdrive : emplacements k23, k24 de la piste du Cycles
++    # (passerelle, engine == 11). Tables : déjà copiées (TABLES_LOW, toy, bits, swarm). imm : tampons C (comme
++    # SY SWARM) et « adda.l #0x4404f758 » (0x40009d7e, 0x40009db2) ; #0x80000000 et #0x40000000 (0x40009c12,
++    # 0x40009d10) sont des constantes. roots : fonctions prises par lea puis appelées par pointeur.
++    "twin": dict(label="SP TWINSHOT", name="SPTwn", engine=11, update=0x400097dc, render=0x40009a8a, image=1,
++                 decay=127,
++                 knobs=(("Sample 1", "SMP1", 64), ("Filter 1", "FLT1", 64), ("Mix", "MIX", 64),
++                        ("Tune 2", "TUN2", 64, 40, 88)),
++                 roots=(0x40006588, 0x40003eb4, 0x40006074, 0x40006434, 0x40006704, 0x40006764),
++                 code_end=0x40009f1a, imm={0x80009cec, 0x80009d80, 0x80009e14, 0x4404f758}),
+ }
+ # Combinaisons qui gardaient leur tweak d'origine (notes/18, notes/19). Depuis l'arrêt des voix muettes (notes/23),
+ # toutes passent par ce générateur ; sdvintage-7th et syntakt-vintage restent disponibles avec build.py.
+@@ -304,7 +319,14 @@ def layout(gen, blocks):
+         if at > b0 + n:
+             raise SystemExit(f"!! code et tables pour la SRAM : {at - b0} o, plus de place")
+     if len(voices) < VOICES:
+-        raise SystemExit(f"!! {len(voices)} voix du Syntakt seulement en SRAM")
++        # (CyclesEmu, 2026-10-23) avec SP TWINSHOT le code ne laisse que 5 voix en SRAM interne : les autres
++        # restent dans la réplique de la SRAM du Syntakt (en SDRAM, comme ses voix 6 et 7, que st_init initialise
++        # aussi). Plus lent sur la machine (cache), sans effet sur le moteur de CyclesEmu.
++        if not os.environ.get("CYEM_VOICES_IN_REPLICA"):
++            raise SystemExit(f"!! {len(voices)} voix du Syntakt seulement en SRAM")
++        print(f"   {len(voices)} voix du Syntakt en SRAM, {VOICES - len(voices)} dans sa réplique (CYEM_VOICES_IN_REPLICA)")
++        while len(voices) < VOICES:
++            voices.append(gx.DST_SRAM + ST_VSTRIDE * len(voices))
+ 
+     def run(x):
+         for b0, r0, n in banks:
+@@ -1067,6 +1089,8 @@ def compile_code(tmp, machines, payload_longs, meter=None, rnd_at=None, nm=0, ru
+         syms[parts[-1]] = int(parts[0], 16)
+         if len(parts) == 4 and DST_BRIDGE + 0x1000 <= int(parts[0], 16) < 0x80000000:      # pas la SRAM
+             data_end = max(data_end, int(parts[0], 16) + int(parts[1], 16))
++    if "cyem_twin" in syms:
++        print(f"cyem_twin = {syms['cyem_twin']:#x}")
+     if len(blobs[".bridge"]) > 0x1000 or data_end > gx.DST_END:
+         raise SystemExit("!! passerelle trop grande")
+     # la charge utile ne recopie que le code (et les constantes) de la passerelle : ses variables doivent être en
+diff --git a/tools/machines/syntakt_bridge/bridge_engines.c b/tools/machines/syntakt_bridge/bridge_engines.c
+index 8dc3595..0ed7158 100644
+--- a/tools/machines/syntakt_bridge/bridge_engines.c
++++ b/tools/machines/syntakt_bridge/bridge_engines.c
+@@ -58,6 +58,9 @@ static update_fn st_update(int e)
+ #endif
+ #ifdef UPD_10
+ 	case 10: return (update_fn)ST(UPD_10);
++#endif
++#ifdef UPD_11
++	case 11: return (update_fn)ST(UPD_11);
+ #endif
+ 	}
+ 	return 0;
+@@ -80,6 +83,9 @@ static render_fn st_render(int e)
+ #endif
+ #ifdef RND_10
+ 	case 10: return (render_fn)ST(RND_10);
++#endif
++#ifdef RND_11
++	case 11: return (render_fn)ST(RND_11);
+ #endif
+ 	}
+ 	return 0;
+@@ -100,6 +106,9 @@ static char params[6][0x40];                         /* p' du Syntakt = piste +
+ static unsigned char need_reset[6];
+ static unsigned char engine_of[6];                   /* moteur du Syntakt de la voix */
+ static int ready;
++#ifdef UPD_11
++s16 cyem_twin[6][2];                                  /* SP TWINSHOT : Sample 2, Overdrive par piste, ecrits par CyclesEmu */
++#endif
+ 
+ /* etat de la voix i du Syntakt : en SRAM interne pour les 6 voix des pistes (ST_VOICE_i, recopiees au demarrage
+  * avec le contenu initial de sa SRAM, notes/29) ; ses voix 6 et 7, initialisees comme sur le Syntakt mais jamais
+@@ -192,6 +201,16 @@ static void update(int engine, s32 pmod, char *v, const char *p)
+ #ifdef UPD_10
+ 	if (engine == 10)                                /* SY SWARM : emplacement 23 = Fundamental Sub (0..2) */
+ 		ps[23] = (ps[23] ? PUNCH_ON_10 : PUNCH_OFF_10) << 8;
++#endif
++#ifdef UPD_11
++	if (engine == 11) {                              /* SP TWINSHOT (CyclesEmu) */
++		if (ps[22] < 0x2800)                     /* Tune 2 : 40..88 */
++			ps[22] = 0x2800;
++		if (ps[22] > 0x5800)
++			ps[22] = 0x5800;
++		ps[23] = cyem_twin[i][0];                /* Sample 2  : hors du lisseur du Cycles */
++		ps[26] = cyem_twin[i][1];                /* Overdrive */
++	}
+ #endif
+ 	V32(sh, 0x3ec) = ps[24];                         /* la boucle du Syntakt recopie l'emplacement 24 */
+ 	ST_PREP(sh);
+@@ -571,3 +590,6 @@ ENTRIES(9)
+ #ifdef UPD_10
+ ENTRIES(10)
+ #endif
++#ifdef UPD_11
++ENTRIES(11)
++#endif
