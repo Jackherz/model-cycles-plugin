@@ -1745,11 +1745,119 @@ pieces were rebuilt:
   - Installed with the new state (`state`, also kept as
     `state-syntakt7-r2`); the 2026-10-23 one stays as
     `state-syntakt7-filter`.
+- **Moved again (2026-10-30), off the T7**: the project is now
+  `~/Documents/AI/CyclesEmu-local/Cyclesemu` (internal APFS disk). Beside it
+  are `plugin-build/` (`cmake -S plugin -B ../plugin-build`) and
+  `digiemu-venv/` (`UV_PROJECT_ENVIRONMENT=~/Documents/AI/CyclesEmu-local/digiemu-venv`).
+  The exFAT notes above no longer apply. The T7 copy is an old backup.
 - **Rebuild kit:** `~/Library/Application Support/CyclesEmu/rebuild-kit/`
   (55 MB): both firmware files, the built OS, the tweak JSON,
   `aot-build-sttw/render.c`, and `data-sttw/` (aot-state, devices,
   coverage.json). From there, the plugin builds without the hour-long
   pipeline.
+
+## Step 44: the Syntakt's amp envelope, its own code (2026-10-31)
+
+Jack: a Syntakt-style amp envelope, as close to the hardware as possible
+(the first of three features; then extra LFOs, then 8 tracks). A spike first
+(the direct Syntakt DSP engine against two Cycles engines; its findings are
+at the end of this step). Jack chose a hybrid: the Cycles engine stays, and
+the envelope is the Syntakt's own DSP function, translated.
+- **Source:** Synthack-OS (MIT; github.com/karigardarsson/Synthack-OS)
+  documents the Syntakt's DSP (section 7). Its amp envelope is
+  `0x40001476`, called per voice and block by `0x4000168e`:
+  `ampenv(buf, state, par, trig, release, voice, kill)`.
+  - `par` is the track's words from +106: ATK +2, HOLD +4, DEC +6, SUS +8,
+    REL +10, MODE +22, AENR +24 (8.8 words).
+  - The state is 12 bytes (phase 0-6, hold counter, level).
+  - The voice loop `0x40004324` does not call it (coverage).
+- **Translated:** `scripts/syntakt_ampenv.py SYX OUT_C STATE_DIR --check`.
+  - It finds coverage by running the function in Unicorn, with stengine's
+    EMAC, then translates it to `aot/build-sttw/st_ampenv.c`
+    (`st_ampenv_run`; `translate.py` gained `emit_c(name=)`).
+  - It writes the DSP image, whose tables the function reads, to
+    `STATE_DIR/syntakt-dsp.bin`.
+  - **24000/24000 blocks bit-exact** against the emulated function: 40
+    scenarios coverage did not see, random settings and events.
+  - The image is also in `~/Library/Application Support/CyclesEmu/state`
+    and the rebuild kit. Neither file goes in git.
+- **Engine:** `mc_engine_set_amp`, `mc_engine_amp_event`,
+  `mc_engine_amp_available`.
+  - The envelope runs in its own small context (the Syntakt image, about
+    1.4 MB) at `TF_HOOK_AFTER`, on each track's buffer, after the smooth
+    filter if it ran: before level, pan and the sends. Its hook is
+    independent of the smooth filter, and it runs once.
+  - Trig, release and kill are queued and consumed at the next block, as the
+    Syntakt passes its masks.
+  - CMake adds `st_ampenv.c` (`MC_HAVE_AMPENV`) when present.
+  - Cost: +1.7 us a block with it on for all 6 tracks (0.26 %).
+- **Measured** from the function on a constant signal:
+
+  | Stage | Behaviour |
+  |---|---|
+  | ATK | linear; 0 instant, 32 48 ms, 64 262 ms, 96 0.71 s, 127 30 s |
+  | HOLD (AHD) | 16 64 ms, 64 1.84 s, 126 9.8 s; fixed: ignores note-off; 127 = NOTE: until note-off (0.4 ms) |
+  | DEC | exponential (-20/-40/-60 dB 1:2:3); to -60 dB: 8 39 ms, 32 1.0 s, 64 5.5 s, 126 29.6 s; 127 infinite |
+  | SUS (ADSR) | value/128: 32 -12 dB, 64 -6 dB, 127 -0.1 dB |
+  | REL | the decay's law (32: 1.0 s to -60 dB) |
+  | ADSR | no hold stage |
+  | Retrig, AENR on | the old level fades to 0 over the trig's block (32 samples), the attack follows |
+  | Retrig, AENR off | carries on from the level it is at |
+  | At rest | passes the signal (a track sounds as before until its first note) |
+
+- **Defaults** (OS 1.42 descriptors, `0x4022e6e8..`): ATK 0, HOLD 64,
+  DEC 127, SUS 100, REL 32, AENR on. MODE has two descriptors, ADSR and
+  AHD.
+  - The plugin gives SY machines (Tone, Chord, SY Toy, Bits, Swarm) ADSR,
+    and the others AHD, as the manual says.
+  - **Not verified on hardware:** SP Twinshot's mode (AHD assumed).
+  - Picking a machine in the editor sets MODE, like the Syntakt. A preset or
+    host change does not.
+- **Plugin:**
+  - Parameters `amp` (off by default), `amode`, `aatk`, `ahold`, `adec`,
+    `asus`, `arel`, `aenr` (`Kind::Amp`). The kit lacks them, so they are
+    pushed at start.
+  - Notes: a trig with every note. A release on note-off, only for the note
+    the track plays (or in legato). A stolen voice: only the new note's
+    trig. Legato: no trig.
+  - A preset saved before step 44 loads with the envelope off.
+  - Editor: the FILTER header's AMP button shows the AMP page (ON, MODE,
+    RESET; ATK HOLD DEC SUS REL; what the mode does not use is greyed out).
+    Help texts carry the measured times.
+- **Tests** (EditorShot "amp envelope", "amp mode on picking a machine";
+  31 PASS):
+  - Off is bit-exact.
+  - Hold 32 ignores a key-up at 300 ms (gain 1.000 at 273 ms, 0.0003 at
+    433 ms); NOTE follows it.
+  - ADSR sustain 64 = 0.500, then the release.
+  - AENR on 0.755 -> 0.010, off -> 0.766. Legato: 1.000.
+  - The same with the smooth filter off.
+  - The reverb tail follows it (-45 dB).
+  - An old preset loads with it off.
+  - CyclesVoice: 7 notes on 6 voices, all released to -97 dB.
+- **Limits:**
+  - It shapes what the Cycles machine plays: it cannot extend a sound the
+    machine's own Decay has ended. Most machines fade 15-25 dB over 4 s even
+    at Decay 127; Snare, SD Vintage and CP Vintage end within about 1 s.
+  - The Syntakt's VOL and the main CPU's parameter handling (locks, LFOs on
+    the amp) are not part of it.
+  - Not compared with a hardware recording (the function is the
+    hardware's; the timing of events around it is ours).
+- **Rebuilding:** after a firmware pipeline,
+  `uv run --no-sync python ../../scripts/syntakt_ampenv.py ../../firmware/Syntakt_OS1.42.syx ../../aot/build-sttw/st_ampenv.c ../../data-sttw/aot-state --check`
+  (with `m68k-linux-gnu-objdump` on PATH), then copy `syntakt-dsp.bin`
+  into the installed state.
+- **The spike** (scratch code, not kept):
+  - The whole Syntakt voice loop translates and runs **180/180 blocks
+    bit-exact** (all 12 engines, 8 voices).
+  - 8 voices: 16 us (Twinshot) to 113 us (SD Vintage) a block; a mix of 8
+    77 us (M1 Pro, -O2, no PGO).
+  - The Cycles' Kick, Snare, Metal, Perc, Tone and Chord are exactly the
+    Syntakt's BD Modern, SD Basic, CY Alloy, PC Carbon, SY Tone and SY
+    Chord: x0.5 gain, residual -156 to -172 dB, OVER 0, PUNCH off.
+  - Two Cycles engines with shared effects (a donor's sends added to a
+    receiver's buses at the effect hooks) is bit-identical except a brief
+    -34 dB burst (blocks 1018-1100) whose cause is not found.
 
 ## Next steps
 

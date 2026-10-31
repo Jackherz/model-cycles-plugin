@@ -102,6 +102,11 @@ public:
     void resized() override;
     // a die on the title line: randomise the section (shift: a variation)
     void enableDice(std::function<void(bool variation)> onDice);
+    void setTitle(const juce::String& t)
+    {
+        title = t;
+        repaint();
+    }
     int minColumns = 4;   // the grid's narrowest: 4 keeps knobs alike across pages
 
 private:
@@ -219,6 +224,7 @@ public:
     void showSetup(bool);   // the SOUND SETUP panel over the page
     void refreshTwinNames();   // the Sample knobs' names, after a new sample folder
     void setTwinPage2(bool p2) { twinOnPage2 = p2; showTwinPage(); }   // tests
+    void setAmpView(bool on) { showAmpView(on); }                      // tests
     std::function<void(const juce::String&)> beforeChange;   // the editor's undo snapshot
     void resized() override;
 
@@ -236,6 +242,12 @@ private:
     juce::TextButton twinPage{"Page 1"};
     bool twinOnPage2 = false, twinMachine = false;
     void showTwinPage();
+    // the FILTER section's other page: the Syntakt amp envelope (step 44)
+    juce::TextButton ampPage{"Amp"};
+    bool ampView = false;
+    std::vector<ParamControl*> filterControls, ampControls;
+    std::unique_ptr<juce::ParameterAttachment> ampModeAtt;   // greys out what the mode does not use
+    void showAmpView(bool);
     CyclesEmuProcessor* processor = nullptr;
     ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
     ModPanel modPanel;
@@ -329,6 +341,7 @@ public:
     int currentPage() const { return current; }
     void showSoundSetup(bool);   // the current track page's SOUND SETUP panel
     void setTwinPage2(bool);     // tests: SP TWINSHOT's page on the current track page
+    void setAmpView(bool);       // tests: the FILTER section's AMP page on the current track page
     void updateTrigLights();    // run by the timer; public for the tests
     bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }
     void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control

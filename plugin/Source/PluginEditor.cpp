@@ -108,7 +108,11 @@ ParamControl::ParamControl(juce::AudioProcessorValueTreeState& st, const juce::S
             for (int i = 0; i < names.size(); ++i)
             {
                 icons.push_back(std::make_unique<IconButton>(iconSet, i));
-                icons.back()->onClick = [this, i] { iconAtt->setValueAsCompleteGesture((float)i); };
+                icons.back()->onClick = [this, i] {
+                    iconAtt->setValueAsCompleteGesture((float)i);
+                    if (onPicked)
+                        onPicked(i);
+                };
                 addAndMakeVisible(*icons.back());
             }
             iconAtt = std::make_unique<juce::ParameterAttachment>(
@@ -738,6 +742,18 @@ void TrackPage::refreshTwinNames()
     twinSample2->setValueText([this](double x) { return processor->twinSamples().describe(juce::roundToInt(x)); });
 }
 
+void TrackPage::showAmpView(bool on)
+{
+    ampView = on;
+    for (auto* c : filterControls)
+        c->setVisible(!on);
+    for (auto* c : ampControls)
+        c->setVisible(on);
+    ampPage.setButtonText(on ? "Filter" : "Amp");
+    filter.setTitle(on ? "AMP" : "FILTER");
+    filter.resized();
+}
+
 void TrackPage::showSetup(bool on)
 {
     modPanel.setVisible(on);
@@ -759,7 +775,13 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     addAndMakeVisible(sound);
     addAndMakeVisible(lfo);
     auto* punch = make(st, t, "punch", "Punch", S::Toggle);
-    sound.addRow({make(st, t, "machine", "Machine", S::Icons, IconSet::Machine), punch,
+    auto* machineControl = make(st, t, "machine", "Machine", S::Icons, IconSet::Machine);
+    // a machine picked here starts the amp envelope's MODE as the Syntakt
+    // does: ADSR for the SY machines, AHD for the others
+    machineControl->onPicked = [&st, t](int m) {
+        setPlain(st, paramId(t, "amode"), (float)CyclesEmuProcessor::ampDefaultFor("amode", m));
+    };
+    sound.addRow({machineControl, punch,
                   make(st, t, "gate", "Gate", S::Toggle), make(st, t, "mute", "Mute", S::Toggle)});
     auto* color = make(st, t, "color", "Color", S::Knob);
     auto* shape = make(st, t, "shape", "Shape", S::Knob);
@@ -852,8 +874,43 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
     filterCut = make(st, t, "fcut", "Cutoff", S::Knob);
     filterRes = make(st, t, "freso", "Reso", S::Knob);
     filterExtra = make(st, t, "fextra", "Morph", S::Knob);
-    filter.addRow({filterCut, filterRes, filterExtra, make(st, t, "fenv", "Env", S::Knob),
-                   make(st, t, "fdec", "Decay", S::Knob)});
+    auto* fenv = make(st, t, "fenv", "Env", S::Knob);
+    auto* fdec = make(st, t, "fdec", "Decay", S::Knob);
+    filter.addRow({filterCut, filterRes, filterExtra, fenv, fdec});
+    filterControls = {ftype, filterCut, filterRes, filterExtra, fenv, fdec};
+    // the Syntakt amp envelope: the section's other page
+    auto* ampOn = make(st, t, "amp", "On", S::Switch);
+    auto* amode = make(st, t, "amode", "Mode", S::Choice);
+    amode->preferredWidth = 120;
+    auto* aenr = make(st, t, "aenr", "Reset", S::Switch);
+    filter.addRow({ampOn, amode, aenr});
+    auto* aatk = make(st, t, "aatk", "Atk", S::Knob);   // the Syntakt's names
+    auto* ahold = make(st, t, "ahold", "Hold", S::Knob);
+    auto* adec = make(st, t, "adec", "Dec", S::Knob);
+    auto* asus = make(st, t, "asus", "Sus", S::Knob);
+    auto* arel = make(st, t, "arel", "Rel", S::Knob);
+    filter.addRow({aatk, ahold, adec, asus, arel});
+    ampControls = {ampOn, amode, aenr, aatk, ahold, adec, asus, arel};
+    // as on the Syntakt: HOLD only in AHD (ADSR has no hold stage, measured),
+    // SUS and REL only in ADSR
+    ampModeAtt = std::make_unique<juce::ParameterAttachment>(
+        *st.getParameter(paramId(t, "amode")),
+        [ahold, asus, arel](float v) {
+            const bool adsr = v >= 0.5f;
+            for (auto [c, on] : {std::pair{ahold, !adsr}, std::pair{asus, adsr}, std::pair{arel, adsr}})
+            {
+                c->setEnabled(on);
+                c->setAlpha(on ? 1.0f : 0.35f);
+            }
+        },
+        nullptr);
+    ampModeAtt->sendInitialUpdate();
+    for (auto* c : ampControls)
+        c->setVisible(false);
+    ampPage.onClick = [this] { showAmpView(!ampView); };
+    ampPage.getProperties().set("helpId", paramId(t, "amp"));
+    ampPage.setEnabled(proc.ampAvailable());   // needs the Syntakt's DSP image in the engine state
+    addAndMakeVisible(ampPage);
     // a type picked here starts from its own defaults (the DN2's: open,
     // flat or dry), as on the hardware; a preset brings its own settings
     ftype->onPicked = [&st, t](int type) {
@@ -939,6 +996,8 @@ void TrackPage::resized()
     setupButton.setBounds(sound.getRight() - 36 - 76, sound.getY() - 1, 70, 20);
     setupButton.toFront(false);
     twinPage.setBounds(setupButton.getX() - 78, sound.getY() - 1, 72, 20);   // SP TWINSHOT only
+    ampPage.setBounds(filter.getRight() - 36 - 76, filter.getY() - 1, 70, 20);   // FILTER / AMP, left of the dice
+    ampPage.toFront(false);
     twinPage.toFront(false);
     modPanel.setBounds(getLocalBounds());
     if (modPanel.isVisible())   // over the page, and its button over it
@@ -1519,6 +1578,12 @@ void CyclesEmuEditor::setTwinPage2(bool p2)
 {
     if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
         tp->setTwinPage2(p2);
+}
+
+void CyclesEmuEditor::setAmpView(bool on)
+{
+    if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
+        tp->setAmpView(on);
 }
 
 void CyclesEmuEditor::showSoundSetup(bool on)

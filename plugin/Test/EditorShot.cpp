@@ -1115,6 +1115,124 @@ int main(int argc, char** argv)
                     full > none * 4 ? "PASS" : "FAIL");
     }
 
+    // the Syntakt amp envelope (NOTES.md step 44): off is the old sound,
+    // bit for bit; on, its gain is the ratio of a render with it to one
+    // without, block by block (Tone, its own Decay infinite)
+    {
+        struct Ev { int block, note, vel; };
+        auto run = [](std::initializer_list<std::pair<const char*, float>> settings, std::vector<Ev> events, int blocks,
+                      bool smooth = true, Product product = Product::Full) {
+            CyclesEmuProcessor f(product);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64);
+            for (auto [id, v] : settings)
+                cyclesemu::setPlain(f.state(), id, v);
+            f.prepareToPlay(48000, 32);
+            if (!smooth)
+                f.setSmoothFilter(false);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<float> rms, raw;
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                for (auto& e : events)
+                    if (e.block == b)
+                        midi.addEvent(e.vel > 0 ? juce::MidiMessage::noteOn(1, e.note, (juce::uint8)e.vel)
+                                                : juce::MidiMessage::noteOff(1, e.note), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                double e2 = 0;
+                for (int i = 0; i < 32; ++i)
+                {
+                    e2 += buf.getSample(0, i) * buf.getSample(0, i);
+                    raw.push_back(buf.getSample(0, i));
+                }
+                rms.push_back((float)std::sqrt(e2 / 32));
+            }
+            return std::pair{rms, raw};
+        };
+        // the envelope's gain at block b: on / off, the same notes
+        auto gain = [](const std::vector<float>& on, const std::vector<float>& off, int b) {
+            return off[(size_t)b] > 1e-6f ? on[(size_t)b] / off[(size_t)b] : 0.0f;
+        };
+        CyclesEmuProcessor probe(Product::Full);
+        const bool available = probe.ampAvailable();
+        const int n0 = 10;   // the note's block; the attack starts at the block after
+        const std::vector<Ev> held{{n0, 60, 127}, {n0 + 450, 60, 0}};   // a key up after 300 ms
+        auto [ref, refRaw] = run({}, held, 1500);
+        // off: changing its settings while off changes nothing
+        auto [off, offRaw] = run({{"t1_aatk", 100}, {"t1_ahold", 10}, {"t1_adec", 5}, {"t1_amode", 1}}, held, 1500);
+        float bypass = 0;
+        for (size_t i = 0; i < refRaw.size(); ++i)
+            bypass = std::max(bypass, std::abs(refRaw[i] - offRaw[i]));
+        // AHD, fixed hold 32 (about 337 ms): the key up at 300 ms is ignored
+        auto [hold, h2] = run({{"t1_amp", 1}, {"t1_amode", 0}, {"t1_aatk", 0}, {"t1_ahold", 32}, {"t1_adec", 8}}, held, 1500);
+        // AHD, hold NOTE: it falls at the key up (decay 8: -60 dB in about 40 ms)
+        auto [note, n2] = run({{"t1_amp", 1}, {"t1_amode", 0}, {"t1_aatk", 0}, {"t1_ahold", 127}, {"t1_adec", 8}}, held, 1500);
+        // ADSR: sustain 64 (half), release 8 after the key up
+        auto [adsr, a2] = run({{"t1_amp", 1}, {"t1_amode", 1}, {"t1_aatk", 0}, {"t1_adec", 8}, {"t1_asus", 64}, {"t1_arel", 8}},
+                              held, 1500);
+        const float holdIn = gain(hold, ref, n0 + 400), holdOut = gain(hold, ref, n0 + 640);
+        const float noteIn = gain(note, ref, n0 + 400), noteOut = gain(note, ref, n0 + 540);
+        const float sus = gain(adsr, ref, n0 + 300), rel = gain(adsr, ref, n0 + 540);
+        // retrigger at 200 ms, attack 64 (about 262 ms): AENR on starts from 0, off carries on
+        const std::vector<Ev> twice{{n0, 60, 127}, {n0 + 300, 60, 127}};
+        auto [ref2, r2] = run({}, twice, 700);
+        auto [en1, e1] = run({{"t1_amp", 1}, {"t1_aatk", 64}, {"t1_ahold", 127}, {"t1_aenr", 1}}, twice, 700);
+        auto [en0, e0] = run({{"t1_amp", 1}, {"t1_aatk", 64}, {"t1_ahold", 127}, {"t1_aenr", 0}}, twice, 700);
+        const float before = gain(en1, ref2, n0 + 298), reset1 = gain(en1, ref2, n0 + 302), reset0 = gain(en0, ref2, n0 + 302);
+        // legato: a second key while the first is held is no new trigger
+        const std::vector<Ev> leg{{n0, 60, 127}, {n0 + 300, 64, 127}};
+        auto [lref, lr] = run({{"t1_legato", 1}}, leg, 700);
+        auto [lon, lo] = run({{"t1_legato", 1}, {"t1_amp", 1}, {"t1_ahold", 127}}, leg, 700);
+        const float legatoDip = gain(lon, lref, n0 + 302);
+        // the smooth filter off: the same envelope
+        auto [holdRaw, hr] = run({{"t1_amp", 1}, {"t1_ahold", 32}, {"t1_adec", 8}}, held, 900, false);
+        auto [refRaw2, rr] = run({}, held, 900, false);
+        const float smoothOff = gain(holdRaw, refRaw2, n0 + 400), smoothOff2 = gain(holdRaw, refRaw2, n0 + 640);
+        // the sends follow it: a short envelope leaves almost no reverb tail
+        const std::vector<Ev> hit{{n0, 60, 127}};
+        auto [wetRef, w1] = run({{"t1_reverbsend", 127}, {"fx_reverbsize", 100}}, hit, 1500);
+        auto [wetEnv, w2] = run({{"t1_reverbsend", 127}, {"fx_reverbsize", 100}, {"t1_amp", 1}, {"t1_ahold", 0}, {"t1_adec", 8}},
+                                hit, 1500);
+        double tailRef = 0, tailEnv = 0;
+        for (int b = 600; b < 1500; ++b)
+            tailRef += wetRef[(size_t)b] * wetRef[(size_t)b], tailEnv += wetEnv[(size_t)b] * wetEnv[(size_t)b];
+        // a track preset saved before the envelope loads with it off
+        bool presetOff = false;
+        {
+            CyclesEmuProcessor f(Product::Full);
+            auto tree = cyclesemu::trackToTree(f.state(), 0);
+            tree.removeProperty("amp", nullptr);
+            cyclesemu::setPlain(f.state(), "t1_amp", 1);
+            cyclesemu::treeToTrack(f.state(), 0, tree);
+            presetOff = f.state().getRawParameterValue("t1_amp")->load() < 0.5f;
+        }
+        // CyclesVoice: 7 notes on 6 voices (one stolen), all released: every voice's release ends
+        // (after 400 blocks: the sends, set to 0, ramp down from the kit's first)
+        const int v0 = 400;
+        std::vector<Ev> chord;
+        for (int k = 0; k < 7; ++k)
+            chord.push_back({v0 + k, 60 + 2 * k, 120}), chord.push_back({v0 + 300, 60 + 2 * k, 0});
+        auto [voice, v2] = run({{"t1_amp", 1}, {"t1_amode", 1}, {"t1_asus", 100}, {"t1_arel", 8}, {"t1_delaysend", 0},
+                                {"t1_reverbsend", 0}}, chord, v0 + 700, true, Product::Voice);
+        const float voiceHeld = voice[(size_t)(v0 + 200)], voiceAfter = voice[(size_t)(v0 + 300 + 150)];
+        const bool ok = available && bypass == 0.0f && holdIn > 0.97f && holdOut < 0.01f && noteIn > 0.97f && noteOut < 0.01f
+                        && std::abs(sus - 0.5f) < 0.03f && rel < 0.01f && before > 0.6f && reset1 < 0.05f
+                        && std::abs(reset0 - before) < 0.05f && legatoDip > 0.97f && std::abs(smoothOff - holdIn) < 0.01f
+                        && smoothOff2 < 0.01f && tailEnv < tailRef * 0.05 && presetOff && voiceHeld > 0.01f
+                        && voiceAfter < voiceHeld * 0.001f;
+        std::printf("amp envelope: available %d; off bit-exact (max difference %g); AHD hold 32 ignores the key up "
+                    "(gain %.3f at 273 ms, %.4f at 433 ms); hold NOTE follows it (%.3f, then %.4f); ADSR sustain 64 %.3f, "
+                    "release %.4f; retrigger AENR on %.3f -> %.3f, off -> %.3f; legato %.3f; smooth filter off %.3f / %.4f; "
+                    "reverb tail %.1f dB; old preset off %d; CyclesVoice %.4f -> %.6f -> %s\n",
+                    available, bypass, holdIn, holdOut, noteIn, noteOut, sus, rel, before, reset1, reset0, legatoDip,
+                    smoothOff, smoothOff2, 10 * std::log10(tailEnv / tailRef + 1e-30), presetOff, voiceHeld, voiceAfter,
+                    ok ? "PASS" : "FAIL");
+    }
+
     // a sample library for SP TWINSHOT: 100 short WAVs in subfolders; 64
     // are taken, the first by name or a random pick, the same for a seed
     {
@@ -1286,6 +1404,45 @@ int main(int argc, char** argv)
         }
         e->setTwinPage2(false);
         proc.state().getParameter("t1_machine")->setValueNotifyingHost(m0);
+    }
+
+    // the AMP page, the envelope on (ADSR)
+    {
+        e->showPage(0);
+        cyclesemu::setPlain(proc.state(), "t1_amp", 1);
+        cyclesemu::setPlain(proc.state(), "t1_amode", 1);
+        e->setAmpView(true);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-amp.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        e->setAmpView(false);
+        cyclesemu::setPlain(proc.state(), "t1_amp", 0);
+        cyclesemu::setPlain(proc.state(), "t1_amode", 0);
+        // picking a machine sets MODE as the Syntakt does: SY machines ADSR, drums AHD
+        ParamControl* machine = nullptr;
+        std::function<void(juce::Component&)> find = [&](juce::Component& c) {
+            if (c.getProperties()["helpId"].toString() == "t1_machine")
+                if (auto* pc = dynamic_cast<ParamControl*>(&c))
+                    machine = pc;
+            for (auto* ch : c.getChildren())
+                find(*ch);
+        };
+        find(*e);
+        const float m0 = proc.state().getParameter("t1_machine")->getValue();
+        std::vector<int> modes;
+        for (int m : {4, 0, 9, 1, 11})   // Tone, Kick, SY Bits, Snare, Twinshot
+        {
+            if (machine && machine->onPicked)
+                machine->onPicked(m);
+            modes.push_back(juce::roundToInt(proc.state().getRawParameterValue("t1_amode")->load()));
+        }
+        proc.state().getParameter("t1_machine")->setValueNotifyingHost(m0);
+        cyclesemu::setPlain(proc.state(), "t1_amode", 0);
+        std::printf("amp mode on picking a machine: Tone %d, Kick %d, SY Bits %d, Snare %d, Twinshot %d -> %s\n", modes[0],
+                    modes[1], modes[2], modes[3], modes[4],
+                    modes == std::vector<int>{1, 0, 1, 0, 0} ? "PASS" : "FAIL");
     }
 
     if (std::getenv("MACHINE_DIAG"))

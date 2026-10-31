@@ -108,6 +108,17 @@ const ParamDef kTrackParams[] = {
     // SP TWINSHOT's two settings beyond the Cycles' knobs (its bridge reads
     // the track's k23 and k24, step 38): Sample 2, Overdrive
     {"twsamp2", "Twinshot Sample 2", 0x42, 0, 127, -1, Kind::KitWord, Show::Plain},
+    // the Syntakt's amp envelope (NOTES.md step 44): its own DSP function,
+    // after the filter; off by default, so a sound plays as it always did.
+    // The order here is ampIds' below.
+    {"amp", "Amp Envelope", 0, 0, 1, -1, Kind::Amp, Show::Plain},
+    {"amode", "Amp Mode", 0, 0, 1, -1, Kind::Amp, Show::Plain},
+    {"aatk", "Amp Attack", 0, 0, 127, -1, Kind::Amp, Show::Plain},
+    {"ahold", "Amp Hold", 0, 0, 127, -1, Kind::Amp, Show::AmpHold},
+    {"adec", "Amp Decay", 0, 0, 127, -1, Kind::Amp, Show::AmpDecay},
+    {"asus", "Amp Sustain", 0, 0, 127, -1, Kind::Amp, Show::Plain},
+    {"arel", "Amp Release", 0, 0, 127, -1, Kind::Amp, Show::Plain},
+    {"aenr", "Amp Env Reset", 0, 0, 1, -1, Kind::Amp, Show::Plain},
     // legato and portamento (the plugin's): PORT, PTIM and AMOUNT, LEGATO,
     // and the Syntakt's portamento setup (NOTES.md step 28). The order here
     // is glideIds' below.
@@ -214,6 +225,8 @@ const juce::StringArray* choicesFor(const char* id)
     if (!std::strcmp(id, "velvol")) return &velCurves;
     if (std::strlen(id) == 6 && (id[0] == 'v' || id[0] == 'k') && id[1] == 'm' && !std::strcmp(id + 3, "dst"))
         return &kModDestNames;
+    static const juce::StringArray ampModes{"AHD", "ADSR"};
+    if (!std::strcmp(id, "amode")) return &ampModes;
     if (!std::strcmp(id, "pslope")) return &slope;
     if (!std::strcmp(id, "pstyle")) return &style;
     return nullptr;
@@ -230,6 +243,25 @@ int kitWordDefault(const char* id) { return !std::strcmp(id, "twsamp2") ? 65 : 0
 // a modulation setting's starting value: none, and velocity to volume as
 // the engine plays it (Lin)
 int modDefault(const char* id) { return !std::strcmp(id, "velvol") ? 2 : 0; }
+
+const char* const ampIds[] = {"amp", "amode", "aatk", "ahold", "adec", "asus", "arel", "aenr"};
+
+// The Syntakt's own amp defaults (its OS 1.42 parameter descriptors): ATK 0,
+// HOLD 64, DEC 127 (infinite), SUS 100, REL 32, AENR on; MODE by machine,
+// ADSR for the SY machines (the descriptor's two variants; the manual: SY
+// machines ADSR, the drum machines AHD). SP TWINSHOT: AHD (not verified on
+// the hardware). Off: the envelope is the plugin's addition.
+bool isSyMachine(int machine) { return machine == 4 || machine == 5 || (machine >= 8 && machine <= 10); }
+int ampDefault(const char* id, int machine)
+{
+    if (!std::strcmp(id, "amode")) return isSyMachine(machine) ? 1 : 0;
+    if (!std::strcmp(id, "ahold")) return 64;
+    if (!std::strcmp(id, "adec")) return 127;
+    if (!std::strcmp(id, "asus")) return 100;
+    if (!std::strcmp(id, "arel")) return 32;
+    if (!std::strcmp(id, "aenr")) return 1;
+    return 0;   // amp (off), aatk
+}
 
 const char* const glideIds[] = {"port", "ptim", "pamount", "legato", "notepri", "pslope", "pstyle", "plegonly", "pgating"};
 
@@ -261,6 +293,8 @@ juce::String showValue(Show s, int v)
         case Show::Semitones: return (v > 64 ? "+" : "") + juce::String(v - 64) + " st";
         case Show::Pan: return v == 64 ? juce::String("C") : v < 64 ? "L" + juce::String(64 - v) : "R" + juce::String(v - 64);
         case Show::Cutoff: return v == 64 ? juce::String("OFF") : v < 64 ? "L" + juce::String(64 - v) : "H" + juce::String(v - 64);
+        case Show::AmpHold: return v >= 127 ? juce::String("NOTE") : juce::String(v);
+        case Show::AmpDecay: return v >= 127 ? juce::String("INF") : juce::String(v);
         default: return juce::String(v);
     }
 }
@@ -282,6 +316,8 @@ int parseValue(Show s, const juce::String& t)
     {
         case Show::Bipolar:
         case Show::Semitones: return x.getIntValue() + 64;
+        case Show::AmpHold:
+        case Show::AmpDecay: return x.equalsIgnoreCase("NOTE") || x.equalsIgnoreCase("INF") ? 127 : x.getIntValue();
         case Show::Pan:
         case Show::Cutoff:
             if (x.startsWithIgnoreCase("L")) return 64 - x.substring(1).getIntValue();
@@ -400,8 +436,8 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     }
     if (engine != nullptr)
         applyMix();
-    for (auto& s : slots)   // the Twinshot words the kit lacks
-        if (engine != nullptr && s.def->kind == Kind::KitWord)
+    for (auto& s : slots)   // the words the kit lacks: Twinshot's, the amp envelope's
+        if (engine != nullptr && (s.def->kind == Kind::KitWord || s.def->kind == Kind::Amp))
             applyAll(*s.def, s.track, s.lastParam);
     if (engine != nullptr)   // the samples Twinshot plays, from the folder last chosen
     {
@@ -465,6 +501,7 @@ void CyclesEmuProcessor::resetTrack(int t)
             case Kind::Filter: setPlain(apvts, id, 0.0f); break;
             case Kind::Mod: setPlain(apvts, id, (float)modDefault(d.id)); break;
             case Kind::KitWord: setPlain(apvts, id, (float)kitWordDefault(d.id)); break;
+            case Kind::Amp: setPlain(apvts, id, (float)ampDefault(d.id, machine)); break;
             case Kind::Fx:
             case Kind::FxEngine: break;
         }
@@ -472,6 +509,8 @@ void CyclesEmuProcessor::resetTrack(int t)
 }
 
 void CyclesEmuProcessor::resetKit() { treeToKit(apvts, initKit); }
+
+int CyclesEmuProcessor::ampDefaultFor(const char* id, int machine) { return ampDefault(id, machine); }
 
 TwinSamples::Pick CyclesEmuProcessor::twinPick()
 {
@@ -603,6 +642,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                 case Kind::Mute:
                 case Kind::Solo:
                 case Kind::KitWord: return (float)kitWordDefault(d.id);
+                case Kind::Amp: return (float)ampDefault(d.id, m);
                 case Kind::Fx:
                 case Kind::FxEngine: break;
             }
@@ -685,6 +725,8 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::FxEngine: return std::strcmp(s.def->id, "delayx") && std::strcmp(s.def->id, "reverbx") ? 0 : 64;
         case Kind::KitWord: return kitWordDefault(s.def->id);   // the kit has none: the Syntakt's defaults
         case Kind::Mod: return modDefault(s.def->id);
+        case Kind::Amp:   // the kit has none: the Syntakt's defaults for the machine
+            return ampDefault(s.def->id, juce::jlimit(0, 11, mc_engine_get_param(engine, s.track, 0x26)));
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
         case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
@@ -752,6 +794,7 @@ void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
             if (voices[t].on && voices[t].note == note)
             {
                 mc_engine_note(engine, t, note, 0, 0, 0x0681);
+                mc_engine_amp_event(engine, t, 0, 1, 0);
                 voices[t].on = false;
                 voices[t].age = ++voiceClock;
                 glides[t].frozen = gs.gating;
@@ -813,6 +856,15 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
     mc_engine_snap_param(engine, track, 0x28);
     applyNoteMods(track, note, velocity);
     mc_engine_note(engine, track, note, velocityToVol(isVoice() ? 0 : track, velocity), 1, 0x0681);
+    mc_engine_amp_event(engine, track, 1, 0, 0);   // the amp envelope's trig, in the same block
+}
+
+// The amp envelope's words to the engine (only while it is on does the
+// engine run it)
+void CyclesEmuProcessor::pushAmp(int track)
+{
+    const int* a = ampValue[track];
+    mc_engine_set_amp(engine, track, a[0], a[2], a[3], a[4], a[5], a[6], a[1], a[7]);
 }
 
 // Legato: to another key without a new trigger, the pitch word carrying the
@@ -925,6 +977,8 @@ void CyclesEmuProcessor::trackNote(int track, int note, int velocity, bool on)
     if (s.legato && !anyHeld)
         return;   // not a key it knew of
     mc_engine_note(engine, track, s.legato ? g.trig : note, 0, 0, 0x0681);
+    if (s.legato || note == g.trig)   // the amp envelope: only the note it plays releases it
+        mc_engine_amp_event(engine, track, 0, 1, 0);
     if (s.gating && (s.legato || note == g.trig))   // Gating: the glide stops with the key
         g.frozen = true;
 }
@@ -1008,6 +1062,12 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::FxEngine: updateFxEngines(); break;
         case Kind::KitWord: mc_engine_twin_param(engine, track, 0, v); break;   // Sample 2
+        case Kind::Amp:
+            for (int i = 0; i < 8; ++i)
+                if (!std::strcmp(d.id, ampIds[i]))
+                    ampValue[track][i] = v;
+            pushAmp(track);
+            break;
         case Kind::Level:
             levelNow[track] = v;
             applyMix();

@@ -16,6 +16,11 @@
 #include "runtime.h"
 #include "engine.h"
 
+#ifdef MC_HAVE_AMPENV
+/* the Syntakt's amp envelope, translated (scripts/syntakt_ampenv.py) */
+int st_ampenv_run(mc_ctx *X, mc_cpu *cpu, uint32_t entry, uint32_t stop_pc);
+#endif
+
 #define RENDER_ISR 0x40058c5eu
 #define FRAME_PC 0x40058a08u
 #define ISR_WORDS 0x40a78e04u
@@ -63,6 +68,11 @@ struct mc_engine {
         float comb[16384];           /* the comb's delay line */
         int pos;
     } tf[6];
+    /* the Syntakt's amp envelope (mc_engine_set_amp), run in its own small
+     * context holding the Syntakt's DSP image (its tables) */
+    mc_ctx *sx;
+    int amp_on[6], amp_ev[6][3];     /* trig, release, kill: until the next block */
+    int amp_any;
 };
 
 /* The mixer (0x400567ba) sums the tracks' delay sends into an interleaved
@@ -436,12 +446,54 @@ static void fx_engine_hook(mc_engine *g, uint32_t pc)
     }
 }
 
+/* The Syntakt's amp envelope on each track's buffer, after the filter and
+ * before the mixer (level, pan, sends): its own function (DSP 0x40001476),
+ * called as the Syntakt's DSP calls it per voice and block (0x4000168e):
+ * (buffer, 12-byte state, amp words, trig, release, voice, kill). Our
+ * scratch layout in its context is scripts/syntakt_ampenv.py's. */
+#define ST_AMPENV 0x40001476u
+#define ST_RET    0x50000000u
+#define ST_BUF    0x50001000u
+#define ST_STATE  0x50002000u
+#define ST_PAR    0x50003000u
+#define ST_STACK  0x5000F000u
+
+static void amp_after(mc_engine *g)
+{
+#ifdef MC_HAVE_AMPENV
+    for (int t = 0; t < 6; t++) {
+        if (!g->amp_on[t])
+            continue;
+        uint8_t *buf = g->x->mem + TRACK_BUFS + 128 * t, *sbuf = g->sx->mem + ST_BUF + 128 * t;
+        memcpy(sbuf, buf, 128);                  /* both big-endian Q31, as the guests see them */
+        const uint32_t args[8] = {ST_RET, ST_BUF + 128 * t, ST_STATE + 12 * t, ST_PAR + 32 * t,
+                                  (uint32_t)g->amp_ev[t][0], (uint32_t)g->amp_ev[t][1], (uint32_t)t,
+                                  (uint32_t)g->amp_ev[t][2]};
+        const uint32_t sp = ST_STACK - sizeof args;
+        for (int i = 0; i < 8; i++)
+            mc_st32_raw(g->sx, sp + 4 * i, args[i]);
+        mc_cpu cpu = {0};
+        cpu.a[7] = sp;
+        cpu.sr = 0x2700;
+        cpu.macsr = 0xa0;
+        cpu.mac_mask = 0xffffffffu;
+        if (st_ampenv_run(g->sx, &cpu, ST_AMPENV, ST_RET) == 0)
+            memcpy(buf, sbuf, 128);
+        g->amp_ev[t][0] = g->amp_ev[t][1] = g->amp_ev[t][2] = 0;
+    }
+#else
+    (void)g;
+#endif
+}
+
 static void engine_hook(mc_ctx *x, uint32_t pc)
 {
     mc_engine *g = x->hook_user;
     if (pc == TF_HOOK_BEFORE || pc == TF_HOOK_AFTER) {
         if (g->smooth_filter)
             (pc == TF_HOOK_BEFORE ? tf_before : tf_after)(g);
+        if (pc == TF_HOOK_AFTER && g->amp_any)
+            amp_after(g);                        /* after the filter, whichever ran it */
         return;
     }
     if (pc == FX_HOOK_DELAY || pc == FX_HOOK_REVERB)
@@ -451,7 +503,7 @@ static void engine_hook(mc_ctx *x, uint32_t pc)
 
 static void engine_update_hook(mc_engine *g)
 {
-    g->x->hook = g->in_l || g->smooth_filter || g->fx_on[0] || g->fx_on[1] ? engine_hook : NULL;
+    g->x->hook = g->in_l || g->smooth_filter || g->fx_on[0] || g->fx_on[1] || g->amp_any ? engine_hook : NULL;
     g->x->hook_user = g;
 }
 
@@ -584,6 +636,24 @@ mc_engine *mc_engine_new(const char *dir, int *err)
      * 0x4a3ed080); the delay lines are the 4 MB eDMA ring at 0x4a400000. */
     memset(g->x->mem + 0x4a300000u, 0, 0x4a3ed000u - 0x4a300000u);
     memset(g->x->mem + 0x4a400000u, 0, 0x400000u);
+#ifdef MC_HAVE_AMPENV
+    /* the Syntakt's DSP image, for its amp envelope: optional */
+    snprintf(path, sizeof path, "%s/syntakt-dsp.bin", dir);
+    if ((f = fopen(path, "rb")) != NULL) {
+        if ((g->sx = mc_ctx_new()) != NULL) {
+            const size_t n = fread(g->sx->mem + 0x40000400u, 1, 0x80000, f);
+            if (n < 0x14470) {                   /* past its tables: not the Syntakt's section 7 */
+                mc_ctx_free(g->sx);
+                g->sx = NULL;
+            } else {
+                memset(g->sx->mem + ST_RET, 0, 0x10000);   /* every scratch page, the stack's too, faulted in now */
+                mc_st32_raw(g->sx, ST_RET, 0x4e714e71u);
+            }
+        }
+        fclose(f);
+        f = NULL;
+    }
+#endif
     if (err) *err = 0;
     return g;
 fail:
@@ -597,6 +667,8 @@ void mc_engine_free(mc_engine *g)
 {
     if (!g) return;
     mc_ctx_free(g->x);
+    if (g->sx)
+        mc_ctx_free(g->sx);
     free(g);
 }
 
@@ -773,4 +845,37 @@ void mc_engine_twin_param(mc_engine *g, int track, int which, int value)
         return;
     value = value < 0 ? 0 : value > 127 ? 127 : value;
     mc_st16_raw(g->x, TWIN_PARAMS + 4 * track + 2 * which, (uint16_t)(value << 8));
+}
+
+int mc_engine_amp_available(mc_engine *g) { return g->sx != NULL; }
+
+void mc_engine_set_amp(mc_engine *g, int track, int on, int atk, int hold, int dec, int sus, int rel, int mode, int aenr)
+{
+    if (!g->sx || track < 0 || track >= 6)
+        return;
+    const uint32_t p = ST_PAR + 32 * track;
+    const int v[5] = {atk, hold, dec, sus, rel};
+    for (int i = 0; i < 5; i++)                  /* +2 ATK .. +10 REL, 8.8 words */
+        mc_st16_raw(g->sx, p + 2 + 2 * i, (uint16_t)((v[i] < 0 ? 0 : v[i] > 127 ? 127 : v[i]) << 8));
+    mc_st16_raw(g->sx, p + 22, (uint16_t)((mode ? 1 : 0) << 8));
+    mc_st16_raw(g->sx, p + 24, (uint16_t)((aenr ? 1 : 0) << 8));
+    on = on != 0;
+    if (on && !g->amp_on[track]) {               /* from bypass: a fresh envelope, at rest */
+        memset(g->sx->mem + ST_STATE + 12 * track, 0, 12);
+        g->amp_ev[track][0] = g->amp_ev[track][1] = g->amp_ev[track][2] = 0;
+    }
+    g->amp_on[track] = on;
+    g->amp_any = 0;
+    for (int t = 0; t < 6; t++)
+        g->amp_any |= g->amp_on[t];
+    engine_update_hook(g);
+}
+
+void mc_engine_amp_event(mc_engine *g, int track, int trig, int release, int kill)
+{
+    if (track < 0 || track >= 6)
+        return;
+    g->amp_ev[track][0] |= trig != 0;
+    g->amp_ev[track][1] |= release != 0;
+    g->amp_ev[track][2] |= kill != 0;
 }

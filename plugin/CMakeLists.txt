@@ -47,6 +47,15 @@ message(STATUS "Engine render: ${MCB}")
 add_library(mcengine STATIC ${MCB}/render.c ${AOT}/runtime.c ${AOT}/engine.c)
 target_include_directories(mcengine PUBLIC ${AOT})
 target_compile_options(mcengine PRIVATE -O2 -Wno-parentheses-equality)
+# the Syntakt's amp envelope, translated from the owner's Syntakt OS
+# (../scripts/syntakt_ampenv.py, NOTES.md step 44); without it the plugin
+# has no amp envelope
+if(EXISTS ${MCB}/st_ampenv.c)
+    target_sources(mcengine PRIVATE ${MCB}/st_ampenv.c)
+    target_compile_definitions(mcengine PRIVATE MC_HAVE_AMPENV=1)
+else()
+    message(WARNING "No ${MCB}/st_ampenv.c: run ../scripts/syntakt_ampenv.py for the amp envelope")
+endif()
 # profile-guided when ../aot/pgo.sh has made the profile (about -35% per block)
 if(EXISTS ${MCB}/render.profdata)
     target_compile_options(mcengine PRIVATE -fprofile-instr-use=${MCB}/render.profdata

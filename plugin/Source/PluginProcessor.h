@@ -30,10 +30,11 @@ enum class Kind
     Mod,        // velocity and key modulation, as the Syntakt's SOUND SETUP: read at each note
     FxEngine,   // the delay's / reverb's engine and third knob (FxEngines.cpp)
     KitWord,    // a Twinshot word the Cycles has no knob for, in the Syntakt bridge's own table
+    Amp,        // the Syntakt's amp envelope (mc_engine_set_amp), off by default
 };
 
 // How the editor and the host show its value.
-enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff, NoteLength, GlideTime };   // NoteLength: 32 = a beat
+enum class Show { Plain, Bipolar, Semitones, Pan, Cutoff, NoteLength, GlideTime, AmpHold, AmpDecay };   // NoteLength: 32 = a beat; AmpHold 127 NOTE, AmpDecay 127 INF
 
 struct ParamDef
 {
@@ -157,8 +158,12 @@ public:
     // first 64 by name, or a random 64 (newPick: another random 64)
     int setTwinPick(bool random, bool newPick);
     static cyclesemu::TwinSamples::Pick twinPick();
+    // the amp envelope setting a machine starts with (the Syntakt's)
+    static int ampDefaultFor(const char* id, int machine);
     const cyclesemu::TwinSamples& twinSamples() const { return *twin; }
     bool twinInstalled() const { return !twinPending.load(); }
+    // the Syntakt amp envelope: in this build and engine state (syntakt-dsp.bin)
+    bool ampAvailable() const { return engine != nullptr && mc_engine_amp_available(engine) != 0; }
     void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }
     uint32_t kitAddress() const { return mc_engine_kit(engine); }
     int engineValue(int track, int offset) const
@@ -277,6 +282,9 @@ private:
     // the way a block (measured, NOTES.md step 33), for the meters
     float levelEased[cyclesemu::kTracks] = {};
     int filterType[cyclesemu::kTracks] = {}, filterExtra[cyclesemu::kTracks] = {};
+    // the amp envelope's settings per track, in ampIds' order, as last applied
+    int ampValue[cyclesemu::kTracks][8] = {};
+    void pushAmp(int track);
     void applyMix();
     // per-track peaks since the editor last looked, from the render's track
     // buffers (before level and pan)

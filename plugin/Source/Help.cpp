@@ -194,6 +194,40 @@ const std::map<juce::String, HelpText> kHelp = {
       "SP Twinshot plays two samples at once. This is the second one, on page 2 (the PAGE button switches), from the "
       "same 64 as Sample 1 (Twinshot Samples in the Kit or Voice menu): forward from the middle up, reversed below it "
       "(shown with <). Tune 2 beside it tunes it, Mix on page 1 balances the two."}},
+    {"amp",
+     {"Amp Envelope",
+      "The Syntakt's amp envelope, running its own code (from your Syntakt OS), after the filter and before level, "
+      "pan and the sends. Off by default: the track plays as it always did. The AMP button in the FILTER header "
+      "shows its page. It shapes what the machine plays: it cannot bring back a sound the machine's own Decay has "
+      "ended, so set the machine's Decay long for slow envelopes. Before its first note it lets the track through."}},
+    {"amode",
+     {"Amp Mode",
+      "AHD: attack, hold, decay, like a drum (a fixed hold ignores the key, HOLD at NOTE follows it). ADSR: attack, "
+      "decay to the sustain level while the key is held, then release (no hold stage). Picking a machine sets it as "
+      "the Syntakt does: ADSR for the SY machines, AHD for the others."}},
+    {"aatk",
+     {"Amp Attack",
+      "A straight rise to full level. 0 is instant, 32 about 48 ms, 64 about 0.26 s, 96 about 0.7 s, 127 30 s."}},
+    {"ahold",
+     {"Amp Hold",
+      "AHD only: how long it stays at full level before the decay. 16 about 64 ms, 64 about 1.8 s, 126 about 10 s, "
+      "the key ignored. At NOTE (127) it holds while the key is down."}},
+    {"adec",
+     {"Amp Decay",
+      "An exponential fall: to the sustain level in ADSR, to silence in AHD. Time to -60 dB: 8 about 40 ms, 32 "
+      "about 1 s, 64 about 5.5 s, 126 about 30 s. INF (127): it never falls."}},
+    {"asus",
+     {"Amp Sustain",
+      "ADSR only: the level held while the key is down, in proportion to the value: 64 is half (-6 dB), 100 about "
+      "-2 dB, 127 full."}},
+    {"arel",
+     {"Amp Release",
+      "ADSR: the fall to silence after the key is let go, the same law as the decay: 8 about 40 ms, 32 about 1 s, "
+      "64 about 5.5 s to -60 dB."}},
+    {"aenr",
+     {"Amp Env Reset",
+      "On (the Syntakt's default): each new note fades the old level out over 0.7 ms and starts the attack from "
+      "silence. Off: a new note carries on from the level it is at."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

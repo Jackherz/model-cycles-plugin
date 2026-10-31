@@ -74,6 +74,18 @@ void mc_engine_set_filter_key(mc_engine *g, int track, double semitones);
  * trigger, so a note starts at the pitch it should. */
 void mc_engine_snap_param(mc_engine *g, int track, int offset);
 
+/* The Syntakt's amp envelope on a track (NOTES.md step 44): its own DSP
+ * function, translated, after the track filter and before level, pan and
+ * the sends. Needs syntakt-dsp.bin in the state folder and a build with
+ * st_ampenv.c (scripts/syntakt_ampenv.py); mc_engine_amp_available says.
+ * ATK, HOLD (127: NOTE), DEC (127: infinite), SUS, REL 0-127; mode 0 AHD,
+ * 1 ADSR; aenr: a trig restarts it from 0. Off: the track as it was. */
+int mc_engine_amp_available(mc_engine *g);
+void mc_engine_set_amp(mc_engine *g, int track, int on, int atk, int hold, int dec, int sus, int rel, int mode, int aenr);
+/* note events for the next block: trig (a note), release (its note-off),
+ * kill (cut, e.g. a stolen voice) */
+void mc_engine_amp_event(mc_engine *g, int track, int trig, int release, int kill);
+
 #ifdef __cplusplus
 }
 #endif
