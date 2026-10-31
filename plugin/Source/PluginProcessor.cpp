@@ -25,6 +25,7 @@
 // rates the 48 kHz stream is resampled.
 
 #include "PluginProcessor.h"
+#include "LfoShape.h"
 #include "PluginEditor.h"
 #include "Presets.h"
 #include "Settings.h"
@@ -61,6 +62,10 @@ const juce::StringArray kModDestNames{"Off", "Decay", "Color", "Shape", "Sweep",
                                       "Filt Dec", "LFO Speed", "LFO Depth", "LFO Fade", "LFO Phase"};
 const int kModDestOffsets[kNumModDests] = {0,    0x38, 0x2a, 0x2c, 0x2e, 0x30, 0x3a, 0x40, 0x3c,
                                            0x3e, 0x4c, 0x4e, 0x50, 0x52, 0x16, 0x24, 0x1a, 0x20};
+const int kLfo2DestOffsets[kNumLfo2Dests] = {0, 0x28, 0x2a, 0x2c, 0x2e, 0x30, 0x38, 0x3a, 0x40,
+                                             0x3c, 0x3e, 0x4c, 0x4e, 0x50, 0x52};
+const juce::StringArray kLfo2DestNames{"Off", "Pitch", "Color", "Shape", "Sweep", "Contour", "Decay", "Vol+Dist", "Pan",
+                                       "Delay Send", "Reverb Send", "Filt Cutoff", "Filt Reso", "Filt Env", "Filt Decay"};
 const int kLfoDestValues[kNumLfoDests] = {0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 29, 30, 31};
 const juce::StringArray kLfoDestNames{"Off", "Pitch", "Color", "Shape", "Sweep", "Contour", "Punch",
                                       "Gate", "Fine Tune", "Decay", "Vol+Dist", "Delay Send",
@@ -119,6 +124,17 @@ const ParamDef kTrackParams[] = {
     {"asus", "Amp Sustain", 0, 0, 127, -1, Kind::Amp, Show::Plain},
     {"arel", "Amp Release", 0, 0, 127, -1, Kind::Amp, Show::Plain},
     {"aenr", "Amp Env Reset", 0, 0, 1, -1, Kind::Amp, Show::Plain},
+    // LFO 2, the plugin's own (NOTES.md step 45), the firmware LFO's rate,
+    // depth and trig laws as measured; off by default (destination Off).
+    // The order here is extraLfoIds' below.
+    {"l2wave", "LFO 2 Waveform", 0, 0, 6, -1, Kind::ExtraLfo, Show::Plain},
+    {"l2reset", "LFO 2 Trig Mode", 0, 0, 4, -1, Kind::ExtraLfo, Show::Plain},
+    {"l2sync", "LFO 2 Sync", 0, 0, 1, -1, Kind::ExtraLfo, Show::Plain},
+    {"l2mult", "LFO 2 Multiplier", 0, 0, 11, -1, Kind::ExtraLfo, Show::Plain},
+    {"l2dest", "LFO 2 Destination", 0, 0, kNumLfo2Dests - 1, -1, Kind::ExtraLfo, Show::Plain},
+    {"l2speed", "LFO 2 Speed", 0, 0, 127, -1, Kind::ExtraLfo, Show::Bipolar},
+    {"l2depth", "LFO 2 Depth", 0, 0, 127, -1, Kind::ExtraLfo, Show::Bipolar},
+    {"l2phase", "LFO 2 Start Phase", 0, 0, 127, -1, Kind::ExtraLfo, Show::Plain},
     // legato and portamento (the plugin's): PORT, PTIM and AMOUNT, LEGATO,
     // and the Syntakt's portamento setup (NOTES.md step 28). The order here
     // is glideIds' below.
@@ -225,6 +241,10 @@ const juce::StringArray* choicesFor(const char* id)
     if (!std::strcmp(id, "velvol")) return &velCurves;
     if (std::strlen(id) == 6 && (id[0] == 'v' || id[0] == 'k') && id[1] == 'm' && !std::strcmp(id + 3, "dst"))
         return &kModDestNames;
+    if (!std::strcmp(id, "l2wave")) return &kLfoWaveNames;
+    if (!std::strcmp(id, "l2reset")) return &kLfoTrigNames;
+    if (!std::strcmp(id, "l2mult")) return &kLfoMultNames;
+    if (!std::strcmp(id, "l2dest")) return &kLfo2DestNames;
     static const juce::StringArray ampModes{"AHD", "ADSR"};
     if (!std::strcmp(id, "amode")) return &ampModes;
     if (!std::strcmp(id, "pslope")) return &slope;
@@ -261,6 +281,16 @@ int ampDefault(const char* id, int machine)
     if (!std::strcmp(id, "arel")) return 32;
     if (!std::strcmp(id, "aenr")) return 1;
     return 0;   // amp (off), aatk
+}
+
+const char* const extraLfoIds[] = {"wave", "reset", "sync", "mult", "dest", "speed", "depth", "phase"};
+
+// LFO 2's starting values: off (destination Off, depth 0), a triangle at
+// x4, speed +16, synced, free running
+int extraLfoDefault(const char* id)
+{
+    const juce::String s(id);
+    return s.endsWith("speed") ? 80 : s.endsWith("depth") ? 64 : s.endsWith("mult") ? 2 : 0;
 }
 
 const char* const glideIds[] = {"port", "ptim", "pamount", "legato", "notepri", "pslope", "pstyle", "plegonly", "pgating"};
@@ -348,7 +378,7 @@ std::unique_ptr<juce::RangedAudioParameter> makeParam(const ParamDef& d, const j
     if (auto* names = choicesFor(d.id))
         return std::make_unique<HardwareDefault<juce::AudioParameterChoice>>(def, juce::ParameterID{id, 1}, name,
                                                                              *names, 0);
-    if (d.kind == Kind::LfoSync)
+    if (d.kind == Kind::LfoSync || !std::strcmp(d.id, "l2sync"))
         return std::make_unique<HardwareDefault<juce::AudioParameterChoice>>(
             def, juce::ParameterID{id, 1}, name, juce::StringArray{"Sync", "Free"}, 0);
     if (d.hi == 1)
@@ -414,6 +444,12 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
         for (int i = 0; i < kModParams; ++i)
             modRaw[t][i] = apvts.getRawParameterValue(paramId(t, modIds[i]));
     }
+    // the extra LFOs: per engine track, from its page (CyclesVoice: the one sound's)
+    for (int t = 0; t < kTracks; ++t)
+        for (int i = 0; i < kExtraLfos; ++i)
+            for (int p = 0; p < kLfoParams; ++p)
+                lfoRaw[t][i][p] = apvts.getRawParameterValue(
+                    paramId(isVoice() ? 0 : t, ("l" + juce::String(i + 2) + extraLfoIds[p]).toRawUTF8()));
     {
         const char* ids[8] = {"delaytime", "delayfeedback", "reverbsize", "reverbtone",
                               "delaytype", "delayx", "reverbtype", "reverbx"};
@@ -502,6 +538,7 @@ void CyclesEmuProcessor::resetTrack(int t)
             case Kind::Mod: setPlain(apvts, id, (float)modDefault(d.id)); break;
             case Kind::KitWord: setPlain(apvts, id, (float)kitWordDefault(d.id)); break;
             case Kind::Amp: setPlain(apvts, id, (float)ampDefault(d.id, machine)); break;
+            case Kind::ExtraLfo: setPlain(apvts, id, (float)extraLfoDefault(d.id)); break;
             case Kind::Fx:
             case Kind::FxEngine: break;
         }
@@ -643,6 +680,7 @@ float CyclesEmuProcessor::defaultFor(const juce::String& id) const
                 case Kind::Solo:
                 case Kind::KitWord: return (float)kitWordDefault(d.id);
                 case Kind::Amp: return (float)ampDefault(d.id, m);
+                case Kind::ExtraLfo: return (float)extraLfoDefault(d.id);
                 case Kind::Fx:
                 case Kind::FxEngine: break;
             }
@@ -725,6 +763,7 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
         case Kind::FxEngine: return std::strcmp(s.def->id, "delayx") && std::strcmp(s.def->id, "reverbx") ? 0 : 64;
         case Kind::KitWord: return kitWordDefault(s.def->id);   // the kit has none: the Syntakt's defaults
         case Kind::Mod: return modDefault(s.def->id);
+        case Kind::ExtraLfo: return extraLfoDefault(s.def->id);
         case Kind::Amp:   // the kit has none: the Syntakt's defaults for the machine
             return ampDefault(s.def->id, juce::jlimit(0, 11, mc_engine_get_param(engine, s.track, 0x26)));
         case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
@@ -857,6 +896,7 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
     applyNoteMods(track, note, velocity);
     mc_engine_note(engine, track, note, velocityToVol(isVoice() ? 0 : track, velocity), 1, 0x0681);
     mc_engine_amp_event(engine, track, 1, 0, 0);   // the amp envelope's trig, in the same block
+    extraLfoNote(track);
 }
 
 // The amp envelope's words to the engine (only while it is on does the
@@ -913,7 +953,10 @@ void CyclesEmuProcessor::applyNoteMods(int track, int note, int velocity)
         {
             modOffset[track][k] = off[k];
             const int offset = 0x14 + 2 * k;
-            mc_engine_param(engine, track, offset, juce::jlimit(0, 127, knobValue[track][k] + off[k]));
+            if (lfoOffset[track][k] != 0.0)
+                writeWord(track, k);
+            else
+                mc_engine_param(engine, track, offset, juce::jlimit(0, 127, knobValue[track][k] + off[k]));
             mc_engine_snap_param(engine, track, offset);
         }
     mc_engine_set_filter_key(engine, track, (note - 60) * raw(17) / 127.0);
@@ -990,10 +1033,13 @@ void CyclesEmuProcessor::writePitch(int track, bool force)
     auto& g = glides[track];
     const double at = g.glissando && g.step > 0 ? std::round(g.cur) : g.cur;
     const int offset = g.trig >= 0 ? juce::roundToInt((at - g.trig) * 256.0) : 0;
-    const int word = juce::jlimit(40 << 8, 88 << 8, (g.userPitch << 8) + offset);
+    const int lfo = juce::roundToInt(lfoPitch[track] * 256.0);   // LFO 2 on Pitch
+    const int word = juce::jlimit(40 << 8, 88 << 8, (g.userPitch << 8) + offset + lfo);
     if (word != g.sentWord || force)
     {
         mc_engine_param_word(engine, track, 0x28, word);
+        if (lfo != 0)   // LFO 2 on Pitch: block by block, as LFO 1 (writeWord)
+            mc_engine_snap_param(engine, track, 0x28);
         g.sentWord = word;
     }
 }
@@ -1012,6 +1058,104 @@ void CyclesEmuProcessor::updateGlides()
             g.cur += d > 0 ? g.step : -g.step;
         writePitch(t);
     }
+}
+
+// LFO 2 (NOTES.md step 45), with the firmware LFO's laws as measured on
+// it: speed x multiplier / 128 cycles a bar (at the tempo when synced, at
+// 120 BPM when free; negative speeds run backwards), depth +-2 knob steps
+// a step (Pitch: semitones), and the trig modes Free (a note changes
+// nothing), Trig (restarts at the start phase), Hold (freezes the value
+// at the note), One and Half (a cycle or half of one from the note, then
+// stop). The waveforms are the LFO display's (LfoShape.h).
+void CyclesEmuProcessor::updateExtraLfos()
+{
+    for (int t = 0; t < kTracks; ++t)
+    {
+        double off[33] = {}, pitch = 0;
+        for (int i = 0; i < kExtraLfos; ++i)
+        {
+            auto v = [&](int p) { return lfoRaw[t][i][p] ? juce::roundToInt(lfoRaw[t][i][p]->load(std::memory_order_relaxed)) : 0; };
+            const int wave = v(0), mode = v(1), dest = juce::jlimit(0, kNumLfo2Dests - 1, v(4)), speed = v(5) - 64,
+                      depth = v(6) - 64;
+            const double bpm = v(2) == 0 ? juce::jmax(1.0, targetBpm) : 120.0;
+            const double cps = std::abs(speed) * std::ldexp(1.0, juce::jlimit(0, 11, v(3))) / 128.0 / (240.0 / bpm);
+            const double step = cps * kBlock / 48000.0 * (speed < 0 ? -1.0 : 1.0);
+            auto& s = extraLfo[t][i];
+            s.free += step;
+            s.free -= std::floor(s.free);
+            const double start = v(7) / 128.0;
+            s.sinceNote += std::abs(step);
+            float value;
+            if (lfoFromNote(wave) && mode != 2)   // Env: a fall from each note, whatever the mode (as LFO 1)
+                value = lfoWave(wave, s.sinceNote + start);
+            else if (mode == 2)   // Hold: the free-running LFO, frozen at each note
+                value = s.triggered ? s.held : lfoWave(wave, s.free + start);
+            else if (mode == 0 || !s.triggered)   // Free, or nothing triggered yet
+                value = mode == 0 || mode == 1 ? lfoWave(wave, s.free + start) : lfoWave(wave, start);
+            else
+            {
+                if (s.running)
+                {
+                    s.phase += step;
+                    const double len = mode == 3 ? 1.0 : mode == 4 ? 0.5 : 1e300;
+                    if (std::abs(s.phase - s.start) >= len)
+                    {
+                        s.phase = s.start + (step < 0 ? -len : len);
+                        s.running = false;
+                    }
+                }
+                value = lfoWave(wave, s.phase);
+            }
+            if (dest == 0 || depth == 0)
+                continue;
+            const double amount = 2.0 * depth * value;   // knob steps
+            if (kLfo2DestOffsets[dest] == 0x28)
+                pitch += amount;
+            else
+                off[(kLfo2DestOffsets[dest] - 0x14) / 2] += amount;
+        }
+        for (int k = 0; k < 33; ++k)
+            if (off[k] != lfoOffset[t][k])
+            {
+                lfoOffset[t][k] = off[k];
+                writeWord(t, k);
+            }
+        if (pitch != lfoPitch[t])
+        {
+            lfoPitch[t] = pitch;
+            writePitch(t);
+        }
+    }
+}
+
+// a note: Trig, One and Half restart at the start phase; Hold freezes
+void CyclesEmuProcessor::extraLfoNote(int track)
+{
+    for (int i = 0; i < kExtraLfos; ++i)
+    {
+        auto v = [&](int p) { return lfoRaw[track][i][p] ? juce::roundToInt(lfoRaw[track][i][p]->load(std::memory_order_relaxed)) : 0; };
+        auto& s = extraLfo[track][i];
+        s.triggered = true;
+        s.start = s.phase = v(7) / 128.0;
+        s.running = true;
+        s.held = lfoWave(v(0), lfoFromNote(v(0)) ? s.sinceNote + s.start : s.free + s.start);
+        s.sinceNote = 0;
+    }
+}
+
+// A sound word as the engine gets it: the knob, the note's velocity and key
+// modulation, and the extra LFOs, in 1/256 knob steps, clamped. With an
+// extra LFO on it, the firmware's smoother is skipped (snapped), so the word
+// moves block by block as LFO 1's modulation does (it adds after the
+// smoother): through the smoother it lagged about 15 blocks and slurred the
+// jumps of Saw, Ramp, Env and Square (measured against LFO 1, step 45).
+void CyclesEmuProcessor::writeWord(int track, int k)
+{
+    const double v = knobValue[track][k] + modOffset[track][k] + lfoOffset[track][k];
+    const int offset = 0x14 + 2 * k;
+    mc_engine_param_word(engine, track, offset, juce::jlimit(0, 127 << 8, juce::roundToInt(v * 256.0)));
+    if (lfoOffset[track][k] != 0.0)
+        mc_engine_snap_param(engine, track, offset);
 }
 
 void CyclesEmuProcessor::applyLfoMult(int track)
@@ -1048,7 +1192,10 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             {
                 const int k = (d.offset - 0x14) / 2;
                 knobValue[track][k] = v;
-                mc_engine_param(engine, track, d.offset, juce::jlimit(d.lo, d.hi, v + modOffset[track][k]));
+                if (lfoOffset[track][k] != 0.0)   // with LFO 2 on it: the sum, as every block
+                    writeWord(track, k);
+                else
+                    mc_engine_param(engine, track, d.offset, juce::jlimit(d.lo, d.hi, v + modOffset[track][k]));
             }
             else
                 mc_engine_param(engine, track, d.offset, v);
@@ -1062,6 +1209,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::FxEngine: updateFxEngines(); break;
         case Kind::KitWord: mc_engine_twin_param(engine, track, 0, v); break;   // Sample 2
+        case Kind::ExtraLfo: break;   // read at every block (updateExtraLfos)
         case Kind::Amp:
             for (int i = 0; i < 8; ++i)
                 if (!std::strcmp(d.id, ampIds[i]))
@@ -1319,6 +1467,7 @@ void CyclesEmuProcessor::renderEngineBlock()
     if (fxRecheck.exchange(false))
         updateFxEngines();
     updateGlides();
+    updateExtraLfos();
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {
         mc_engine_set_tempo(engine, targetBpm);

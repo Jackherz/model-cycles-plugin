@@ -221,7 +221,7 @@ void Section::resized()
     std::vector<Row> rows;
     for (auto& row : this->rows)
     {
-        Row shown{{}, row.custom, row.minHeight};
+        Row shown{{}, row.custom != nullptr && row.custom->isVisible() ? row.custom : nullptr, row.minHeight};
         for (auto* c : row.controls)
             if (c->isVisible())
                 shown.controls.push_back(c);
@@ -294,12 +294,11 @@ ParamControl* TrackPage::make(juce::AudioProcessorValueTreeState& st, int track,
     return controls.back().get();   // the section it is put in owns its place
 }
 
-LfoScope::LfoScope(CyclesEmuProcessor& p, int t) : proc(p), track(t)
+LfoScope::LfoScope(CyclesEmuProcessor& p, int t, const char* prefix) : proc(p), track(t)
 {
-    const char* ids[] = {"lfowave", "lforeset", "lfosync", "lfomult", "lfodest",
-                         "lfospeed", "lfodepth", "lfofade", "lfophase"};
+    const char* ids[] = {"wave", "reset", "sync", "mult", "dest", "speed", "depth", "fade", "phase"};
     for (int i = 0; i < 9; ++i)
-        raw[i] = p.state().getRawParameterValue(paramId(t, ids[i]));
+        raw[i] = p.state().getRawParameterValue(paramId(t, (juce::String(prefix) + ids[i]).toRawUTF8()));
     setInterceptsMouseClicks(false, false);
     startTimerHz(30);
 }
@@ -309,7 +308,7 @@ LfoScope::State LfoScope::read() const
     State s;
     int* f[] = {&s.wave, &s.trig, &s.sync, &s.mult, &s.dest, &s.speed, &s.depth, &s.fade, &s.phase};
     for (int i = 0; i < 9; ++i)
-        *f[i] = juce::roundToInt(raw[i]->load());
+        *f[i] = raw[i] != nullptr ? juce::roundToInt(raw[i]->load()) : 64;   // (LFO 2: no fade)
     s.bpm = proc.currentBpm();
     return s;
 }
@@ -754,6 +753,20 @@ void TrackPage::showAmpView(bool on)
     filter.resized();
 }
 
+void TrackPage::showLfo2(bool on)
+{
+    lfo2View = on;
+    for (auto* c : lfo1Controls)
+        c->setVisible(!on);
+    scope.setVisible(!on);
+    for (auto* c : lfo2Controls)
+        c->setVisible(on);
+    scope2.setVisible(on);
+    lfoPage.setButtonText(on ? "LFO 1" : "LFO 2");
+    lfo.setTitle(on ? "LFO 2" : "LFO");
+    lfo.resized();
+}
+
 void TrackPage::showSetup(bool on)
 {
     modPanel.setVisible(on);
@@ -768,7 +781,8 @@ void TrackPage::showSetup(bool on)
     setupButton.toFront(false);
 }
 
-TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterScope(proc, t), modPanel(proc.state(), t)
+TrackPage::TrackPage(CyclesEmuProcessor& proc, int t)
+    : scope(proc, t), scope2(proc, t, "l2"), filterScope(proc, t), modPanel(proc.state(), t)
 {
     using S = ParamControl::Style;
     auto& st = proc.state();
@@ -834,6 +848,8 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                 macroKnobs[i]->setLabel(labels[row][i]);
                 if (destControl != nullptr)
                     destControl->setItemText(2 + i, dests[row][i]);
+                if (dest2Control != nullptr && i < 4)   // LFO 2: Color .. Contour are entries 2-5 too
+                    dest2Control->setItemText(2 + i, dests[row][i]);
                 if (i < 4)   // the modulation's lists: Color..Contour are entries 2-5 (short names)
                     modPanel.setDestText(2 + i, labels[row][i]);
             }
@@ -855,18 +871,47 @@ TrackPage::TrackPage(CyclesEmuProcessor& proc, int t) : scope(proc, t), filterSc
                   make(st, t, "delaysend", "Delay", S::Knob), make(st, t, "reverbsend", "Reverb", S::Knob),
                   make(st, t, "level", "Level", S::Knob)});
 
-    lfo.addRow({make(st, t, "lfowave", "Wave", S::Icons, IconSet::Wave),
-                make(st, t, "lforeset", "Trig", S::Icons, IconSet::Trig)});
+    auto* wave1 = make(st, t, "lfowave", "Wave", S::Icons, IconSet::Wave);
+    auto* trig1 = make(st, t, "lforeset", "Trig", S::Icons, IconSet::Trig);
+    lfo.addRow({wave1, trig1});
     auto* dest = make(st, t, "lfodest", "Destination", S::Choice);
     destControl = dest;
     scope.destName = [this](int i) { return destControl->itemText(i); };
     machineAtt->sendInitialUpdate();   // now that the destination list exists too
     auto* mult = make(st, t, "lfomult", "Mult", S::Choice);
     mult->preferredWidth = 84;
-    lfo.addRow({make(st, t, "lfosync", "", S::Icons, IconSet::Clock), mult, dest});
+    auto* sync1 = make(st, t, "lfosync", "", S::Icons, IconSet::Clock);
+    lfo.addRow({sync1, mult, dest});
     lfo.addCustomRow(&scope, 84);
-    lfo.addRow({make(st, t, "lfospeed", "Speed", S::Knob), make(st, t, "lfodepth", "Depth", S::Knob),
-                make(st, t, "lfofade", "Fade", S::Knob), make(st, t, "lfophase", "Phase", S::Knob)});
+    auto* speed1 = make(st, t, "lfospeed", "Speed", S::Knob);
+    auto* depth1 = make(st, t, "lfodepth", "Depth", S::Knob);
+    auto* fade1 = make(st, t, "lfofade", "Fade", S::Knob);
+    auto* phase1 = make(st, t, "lfophase", "Phase", S::Knob);
+    lfo.addRow({speed1, depth1, fade1, phase1});
+    lfo1Controls = {wave1, trig1, sync1, mult, dest, speed1, depth1, fade1, phase1};
+    // LFO 2, the plugin's: the same layout, no fade (the section's other page)
+    auto* wave2 = make(st, t, "l2wave", "Wave", S::Icons, IconSet::Wave);
+    auto* trig2 = make(st, t, "l2reset", "Trig", S::Icons, IconSet::Trig);
+    lfo.addRow({wave2, trig2});
+    dest2Control = make(st, t, "l2dest", "Destination", S::Choice);
+    scope2.destName = [this](int i) { return dest2Control->itemText(i); };
+    auto* mult2 = make(st, t, "l2mult", "Mult", S::Choice);
+    mult2->preferredWidth = 84;
+    auto* sync2 = make(st, t, "l2sync", "", S::Icons, IconSet::Clock);
+    lfo.addRow({sync2, mult2, dest2Control});
+    lfo.addCustomRow(&scope2, 84);
+    auto* speed2 = make(st, t, "l2speed", "Speed", S::Knob);
+    auto* depth2 = make(st, t, "l2depth", "Depth", S::Knob);
+    auto* phase2 = make(st, t, "l2phase", "Phase", S::Knob);
+    lfo.addRow({speed2, depth2, phase2});
+    lfo2Controls = {wave2, trig2, sync2, mult2, dest2Control, speed2, depth2, phase2};
+    for (auto* c : lfo2Controls)
+        c->setVisible(false);
+    scope2.setVisible(false);
+    machineAtt->sendInitialUpdate();   // LFO 2's destination names too
+    lfoPage.onClick = [this] { showLfo2(!lfo2View); };
+    lfoPage.getProperties().set("helpId", paramId(t, "l2dest"));
+    addAndMakeVisible(lfoPage);
     addAndMakeVisible(filter);
     auto* ftype = make(st, t, "ftype", "Type", S::Choice);
     ftype->preferredWidth = 240;
@@ -997,6 +1042,8 @@ void TrackPage::resized()
     setupButton.toFront(false);
     twinPage.setBounds(setupButton.getX() - 78, sound.getY() - 1, 72, 20);   // SP TWINSHOT only
     ampPage.setBounds(filter.getRight() - 36 - 76, filter.getY() - 1, 70, 20);   // FILTER / AMP, left of the dice
+    lfoPage.setBounds(lfo.getRight() - 36 - 76, lfo.getY() - 1, 70, 20);         // LFO 1 / LFO 2
+    lfoPage.toFront(false);
     ampPage.toFront(false);
     twinPage.toFront(false);
     modPanel.setBounds(getLocalBounds());
@@ -1584,6 +1631,12 @@ void CyclesEmuEditor::setAmpView(bool on)
 {
     if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
         tp->setAmpView(on);
+}
+
+void CyclesEmuEditor::setLfo2View(bool on)
+{
+    if (auto* tp = dynamic_cast<TrackPage*>(pages[current]))
+        tp->setLfo2View(on);
 }
 
 void CyclesEmuEditor::showSoundSetup(bool on)

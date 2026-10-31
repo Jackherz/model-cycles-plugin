@@ -34,6 +34,9 @@ void getParams(juce::AudioProcessorValueTreeState& st, const juce::ValueTree& tr
     // saved before the amp envelope (NOTES.md step 44): it played without
     if (track < kTracks && !tree.hasProperty("amp"))
         setPlain(st, paramId(track, "amp"), 0.0f);
+    // saved before LFO 2 (step 45): it played without
+    if (track < kTracks && !tree.hasProperty("l2dest"))
+        setPlain(st, paramId(track, "l2dest"), 0.0f);
 }
 } // namespace
 

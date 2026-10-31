@@ -31,6 +31,7 @@ enum class Kind
     FxEngine,   // the delay's / reverb's engine and third knob (FxEngines.cpp)
     KitWord,    // a Twinshot word the Cycles has no knob for, in the Syntakt bridge's own table
     Amp,        // the Syntakt's amp envelope (mc_engine_set_amp), off by default
+    ExtraLfo,   // the plugin's LFO 2 (..): read at every block, nothing to apply on a change
 };
 
 // How the editor and the host show its value.
@@ -77,6 +78,10 @@ inline int filterEngineType(int menu)
 }
 constexpr int kNumLfoDests = 18;
 extern const int kLfoDestValues[kNumLfoDests];
+// LFO 2's destinations: the sound words it moves (Off: 0), names as LFO 1's
+constexpr int kNumLfo2Dests = 15;
+extern const int kLfo2DestOffsets[kNumLfo2Dests];
+extern const juce::StringArray kLfo2DestNames;
 
 juce::String paramId(int track, const char* id);   // "t1_decay", "fx_delaytime", "midimode"
 
@@ -285,6 +290,24 @@ private:
     // the amp envelope's settings per track, in ampIds' order, as last applied
     int ampValue[cyclesemu::kTracks][8] = {};
     void pushAmp(int track);
+    // The plugin's extra LFOs, beside the firmware's (NOTES.md step 45):
+    // kExtraLfos per track, parameters "l2wave" .. ("l3" .. for a next one),
+    // off by default (destination Off). Each block they add to the words the
+    // engine gets, after the knob and the note modulation (writeWord).
+    static constexpr int kExtraLfos = 1, kLfoParams = 8;   // wave reset sync mult dest speed depth phase
+    struct ExtraLfoState
+    {
+        double free = 0, phase = 0, start = 0;   // cycles: the free-running phase, the triggered one
+        double sinceNote = 1e9;                  // cycles since the last note (Env falls from it)
+        bool triggered = false, running = false;
+        float held = 0;
+    } extraLfo[cyclesemu::kTracks][kExtraLfos];
+    std::atomic<float>* lfoRaw[cyclesemu::kTracks][kExtraLfos][kLfoParams] = {};
+    double lfoOffset[cyclesemu::kTracks][33] = {};   // their sum per sound word, in knob steps
+    double lfoPitch[cyclesemu::kTracks] = {};        // on Pitch, in semitones
+    void updateExtraLfos();
+    void extraLfoNote(int track);
+    void writeWord(int track, int k);
     void applyMix();
     // per-track peaks since the editor last looked, from the render's track
     // buffers (before level and pan)

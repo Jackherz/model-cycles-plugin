@@ -1859,7 +1859,96 @@ the envelope is the Syntakt's own DSP function, translated.
     receiver's buses at the effect hooks) is bit-identical except a brief
     -34 dB burst (blocks 1018-1100) whose cause is not found.
 
+## Step 45: LFO 2, the plugin's, with LFO 1's measured laws (2026-10-31)
+
+Jack: more LFOs per track, one as the first milestone, off by default,
+designed so that 2-3 more need no rewrite.
+- **LFO 1 measured first** (the firmware's, on the smoothed pan word the
+  voice reads, `0x8000100c + 14 + 66 t + 2 k`, after snapping the settings):
+  - **Depth:** +-2 knob steps a depth step, linear, the same on every
+    destination (Pitch in semitones: depth 1 = +-2 st); 32 sweeps the
+    whole range.
+  - **Rate:** speed x multiplier / 128 cycles a bar (step 11); start phase
+    = value / 128 of a cycle; negative speed runs backwards.
+  - **Trig modes, now verified:**
+    - 0 Free: a note changes nothing.
+    - 1 Trig: restarts at the start phase.
+    - 2 Hold: freezes the value at the note.
+    - 3 One: a cycle from the note (seen consistent; its stop is outside
+      the window measured).
+    - 4 Half: half a cycle, then stops.
+  - **Waveforms:**
+    - Triangle and sine start at 0 going up; square is high first.
+    - **Saw falls** from +1.
+    - **Env** falls once from each note, exp(-8.34 x cycles), in Trig and
+      Free mode alike, and never repeats by itself.
+    - **Ramp** rises 0 to 1 over the first half of each cycle, then rests
+      at 0.
+    - **Random** holds 16 steps a cycle.
+    - `LfoShape.h` had saw rising, env periodic (exp -5), ramp falling and
+      random at 8 steps: corrected, so **LFO 1's display is now right too**.
+  - **Fade:** negative fades in, positive out. Its law is not found yet
+    (non-monotonic readings, windows that mixed in the note): not copied.
+  - A setting changed just before a note may not have reached the LFO yet:
+    the firmware's smoother slides it, so LFO 1 can still be in its old trig
+    mode at the note.
+- **LFO 2** (`kExtraLfos = 1` slots; parameters `l2wave`, `l2reset`,
+  `l2sync`, `l2mult`, `l2dest`, `l2speed`, `l2depth`, `l2phase`; a next
+  slot is `l3..`, the constant, and its UI page):
+  - Off by default (destination Off, depth 0). Presets from before load it
+    off.
+  - Destinations: Off, Pitch, Color, Shape, Sweep, Contour, Decay, Vol+Dist,
+    Pan, Delay Send, Reverb Send, Filt Cutoff, Filt Reso, Filt Env, Filt
+    Decay. Color to Contour are named after the machine, as LFO 1's.
+  - Each block (`updateExtraLfos`): the sum per word goes in `lfoOffset`.
+    `writeWord` sends knob + velocity/key offset + LFO, in 1/256 steps,
+    clamped. Pitch goes through `writePitch`, with the glide.
+  - The host parameters and the knob are never changed.
+  - A knob change or a note's modulation keeps the LFO's part (they use
+    `writeWord` while it is on).
+  - **The smoother is snapped** on a word LFO 2 moves. Through it, LFO 2
+    lagged LFO 1 by about 15 blocks and slurred the jumps of Saw, Ramp, Env
+    and Square. LFO 1 adds after the smoother, and LFO 1's modulation
+    survives the snap (checked). Cost: a knob turned on a word LFO 2 moves
+    jumps instead of gliding.
+  - Notes: Trig, One and Half restart; Hold freezes; Env restarts in any
+    mode except Hold. CyclesVoice: per voice, from the one sound's settings.
+- **Editor:** an LFO 2 button in the LFO header shows LFO 2's page (LFO 1's
+  layout without Fade, its own LFO display). `LfoScope` takes the
+  parameters' prefix; `Section` skips a hidden custom row.
+- **Tests** (EditorShot "lfo 2", 32 PASS):
+  - Off is bit-exact.
+  - **Against LFO 1 at the same settings on pan: triangle and sine within
+    0.11 knob steps, saw 0.02, env 0.18; 99.4 % of all blocks of the six
+    waveforms within 1 step** (square's and ramp's jumps a block apart).
+  - LFO 1 and LFO 2 add (32..96 at +8 each).
+  - Hold, One and Half stay put after.
+  - Synced: 16 / 32 half-cycles in 16 s at 120 / 240 BPM; free at 240: 16.
+  - A knob moved while it runs: the centre follows.
+  - Pitch depth +2: +-4 st.
+  - Fast on the cutoff: at most 2.7 steps a block.
+  - An old preset loads it off.
+  - Cost: +4.5 us a 128-sample callback with it on all 6 tracks (0.17 %).
+- **Not done:** fade (above); LFO 2 destinations on the amp envelope or
+  the FX; the dice randomising LFO 2 (with Jack's AMP/FILTER note).
+- **More slots:** raise `kExtraLfos`, add `l3..` parameter rows and their
+  help, and a page (the header button would cycle LFO 1 / 2 / 3). The
+  modulation pipeline already sums any number.
+
 ## Next steps
+
+Owner's notes for a later build (2026-10-31, after step 44):
+- The AMP page should come before the FILTER page in the editor, as on the
+  Syntakt (the amp first, not the filter).
+- The FILTER section's dice should randomise the amp envelope when the AMP
+  page is showing.
+
+Owner's notes for a later build (2026-10-31, after step 45):
+- With the Random waveform, the start phase should smooth the waveform, as on
+  the hardware (both LFOs).
+- An LFO start delay, as the Syntakt has.
+- LFOs able to target the amp envelope's settings.
+
 
 
 

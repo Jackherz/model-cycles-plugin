@@ -1115,6 +1115,172 @@ int main(int argc, char** argv)
                     full > none * 4 ? "PASS" : "FAIL");
     }
 
+    // LFO 2 (NOTES.md step 45): off is the old sound; at LFO 1's settings
+    // it moves a word as LFO 1 does (the smoothed words the voices read)
+    {
+        struct Ev { int block, note; };
+        auto words = [](std::initializer_list<std::pair<const char*, float>> settings, std::vector<Ev> notes, int blocks,
+                        int k, double bpm = 120.0, std::vector<std::pair<int, std::pair<const char*, float>>> changes = {}) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            cyclesemu::setPlain(f.state(), "followhost", 0);
+            cyclesemu::setPlain(f.state(), "tempo", (float)bpm);
+            cyclesemu::setPlain(f.state(), "t1_machine", 4);
+            cyclesemu::setPlain(f.state(), "t1_decay", 127);
+            cyclesemu::setPlain(f.state(), "t1_lfodepth", 64);
+            for (auto [id, v] : settings)
+                cyclesemu::setPlain(f.state(), id, v);
+            f.prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<double> w;
+            std::vector<float> audio;
+            const uint32_t a = 0x8000100cu + 14u + 2u * (uint32_t)k;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (auto& c : changes)
+                    if (c.first == b)
+                        cyclesemu::setPlain(f.state(), c.second.first, c.second.second);
+                juce::MidiBuffer midi;
+                for (auto& e : notes)
+                    if (e.block == b)
+                        midi.addEvent(juce::MidiMessage::noteOn(1, e.note, (juce::uint8)110), 0);
+                buf.clear();
+                f.processBlock(buf, midi);
+                w.push_back((int16_t)((f.peek(a) << 8) | f.peek(a + 1)) / 256.0);
+                for (int i = 0; i < 32; ++i)
+                    audio.push_back(buf.getSample(0, i));
+            }
+            return std::pair{w, audio};
+        };
+        auto range = [](const std::vector<double>& w, int from, int to) {
+            auto [lo, hi] = std::minmax_element(w.begin() + from, w.begin() + to);
+            return std::pair{*lo, *hi};
+        };
+        const std::vector<Ev> note{{100, 60}};
+        const int pan = 22, kCut = 28;
+        // off: its settings changed, destination Off, the sound is the same
+        auto [ref, refAudio] = words({}, note, 3000, pan);
+        auto [off, offAudio] = words({{"t1_l2speed", 120}, {"t1_l2depth", 100}, {"t1_l2wave", 2}}, note, 3000, pan);
+        float bypass = 0;
+        for (size_t i = 0; i < refAudio.size(); ++i)
+            bypass = std::max(bypass, std::abs(refAudio[i] - offAudio[i]));
+        // LFO 1 against LFO 2 on pan, each waveform (not Random: its values are its own): speed +32,
+        // x4 (a cycle a bar), depth +16, Trig; the note after the settings settle (block 1500)
+        const std::vector<Ev> late{{1500, 60}};
+        double maxDiff = 0, lo2 = 1e9, hi2 = -1e9;
+        int within = 0, compared = 0;
+        for (int wave = 0; wave < 6; ++wave)
+        {
+            auto [l1, a1] = words({{"t1_lfodest", 13}, {"t1_lfowave", (float)wave}, {"t1_lforeset", 1}, {"t1_lfosync", 0},
+                                   {"t1_lfomult", 2}, {"t1_lfospeed", 96}, {"t1_lfodepth", 80}, {"t1_lfophase", 0}}, late, 4600, pan);
+            auto [l2, a2] = words({{"t1_l2dest", 8}, {"t1_l2wave", (float)wave}, {"t1_l2reset", 1}, {"t1_l2sync", 0},
+                                   {"t1_l2mult", 2}, {"t1_l2speed", 96}, {"t1_l2depth", 80}, {"t1_l2phase", 0}}, late, 4600, pan);
+            for (int b = 1520; b < 4600; ++b)
+            {
+                const double d = std::abs(l1[(size_t)b] - l2[(size_t)b]);
+                within += d <= 1.0;
+                ++compared;
+                if (wave < 2)   // the continuous ones: everywhere
+                    maxDiff = std::max(maxDiff, d);
+            }
+            if (wave == 0)
+                std::tie(lo2, hi2) = range(l2, 1520, 4600);
+        }
+        const double share = (double)within / compared;
+        // both on pan, in phase: they add (depth +8 each: +-16 and +-16)
+        auto [both, ab] = words({{"t1_lfodest", 13}, {"t1_lfowave", 0}, {"t1_lforeset", 1}, {"t1_lfosync", 0}, {"t1_lfofade", 64},
+                                 {"t1_lfophase", 0}, {"t1_lfomult", 2}, {"t1_lfospeed", 96}, {"t1_lfodepth", 72},
+                                 {"t1_l2dest", 8}, {"t1_l2reset", 1}, {"t1_l2mult", 2}, {"t1_l2speed", 96}, {"t1_l2depth", 72}},
+                                late, 4600, pan);
+        auto [loB, hiB] = range(both, 1520, 4600);
+        // trig modes: Hold freezes at the note; One stops after a cycle, Half after half (a cycle = 3000 blocks)
+        auto mode = [&](int m) {
+            return words({{"t1_l2dest", 8}, {"t1_l2wave", 0}, {"t1_l2reset", (float)m}, {"t1_l2mult", 2}, {"t1_l2speed", 96},
+                          {"t1_l2depth", 80}}, {{1000, 60}}, 6000, pan).first;
+        };
+        auto hold = mode(2), one = mode(3), half = mode(4);
+        auto [hLo, hHi] = range(hold, 1500, 6000);
+        auto [oLo, oHi] = range(one, 4200, 6000);
+        auto [fLo, fHi] = range(half, 2700, 6000);
+        // tempo: synced, twice the tempo is twice the rate; free, the same
+        auto cycles = [&](float sync, double bpm) {
+            auto w = words({{"t1_l2dest", 8}, {"t1_l2wave", 2}, {"t1_l2sync", sync}, {"t1_l2mult", 2}, {"t1_l2speed", 96},
+                            {"t1_l2depth", 80}}, {}, 24000, pan, bpm).first;   // 16 s
+            int flips = 0;
+            for (size_t b = 1; b < w.size(); ++b)
+                flips += (w[b] > 64.0) != (w[b - 1] > 64.0);
+            return flips;
+        };
+        const int sync120 = cycles(0, 120), sync240 = cycles(0, 240), free240 = cycles(1, 240);
+        // the knob moves while it runs: the centre follows the knob
+        auto [moved, am] = words({{"t1_l2dest", 8}, {"t1_l2mult", 2}, {"t1_l2speed", 96}, {"t1_l2depth", 72}}, note, 6000, pan,
+                                 120.0, {{3000, {"t1_pan", 32}}});
+        auto [mLo, mHi] = range(moved, 3100, 6000);
+        // Pitch: semitones, 2 a depth step
+        auto [pitch, ap] = words({{"t1_l2dest", 1}, {"t1_l2mult", 2}, {"t1_l2speed", 96}, {"t1_l2depth", 66}}, note, 3000, 10);
+        auto [pLo, pHi] = range(pitch, 150, 3000);
+        // fast on the cutoff (x64, 16 cycles a bar): the word's largest step a block
+        auto [cut, ac] = words({{"t1_fcut", 64}, {"t1_l2dest", 11}, {"t1_l2mult", 6}, {"t1_l2speed", 127}, {"t1_l2depth", 96}},
+                               note, 3000, kCut);
+        double maxStep = 0;
+        for (size_t b = 151; b < 3000; ++b)
+            maxStep = std::max(maxStep, std::abs(cut[b] - cut[b - 1]));
+        // its cost: all 6 tracks with LFO 2 on (fast, on the cutoff) against all off, 6 notes playing
+        auto timed = [](bool on) {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            for (int t = 1; t <= 6; ++t)
+            {
+                const juce::String p = "t" + juce::String(t) + "_";
+                cyclesemu::setPlain(f.state(), p + "decay", 127);
+                if (on)
+                    for (auto [id, v] : {std::pair<const char*, float>{"l2dest", 11}, {"l2mult", 6}, {"l2speed", 120}, {"l2depth", 90}})
+                        cyclesemu::setPlain(f.state(), p + id, v);
+            }
+            f.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            double best = 1e9;
+            for (int rep = 0; rep < 3; ++rep)
+            {
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                for (int b = 0; b < 1500; ++b)
+                {
+                    juce::MidiBuffer midi;
+                    if (b % 375 == 0)
+                        for (int ch = 1; ch <= 6; ++ch)
+                            midi.addEvent(juce::MidiMessage::noteOn(ch, 60, (juce::uint8)110), 0);
+                    buf.clear();
+                    f.processBlock(buf, midi);
+                }
+                best = std::min(best, juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - t0) / 1500);
+            }
+            return best * 1e6;
+        };
+        const double usOff = timed(false), usOn = timed(true);
+        std::printf("lfo 2 cost: 128-sample callback, 6 tracks playing: off %.1f us, LFO 2 on all 6 %.1f us (%+.1f us, %.2f%% of "
+                    "real time)\n", usOff, usOn, usOn - usOff, (usOn - usOff) / (128.0 / 48000.0 * 1e6) * 100);
+        // a track preset saved before LFO 2 loads with it off
+        bool presetOff = false;
+        {
+            CyclesEmuProcessor f(Product::Full);
+            auto tree = cyclesemu::trackToTree(f.state(), 0);
+            tree.removeProperty("l2dest", nullptr);
+            cyclesemu::setPlain(f.state(), "t1_l2dest", 8);
+            cyclesemu::treeToTrack(f.state(), 0, tree);
+            presetOff = f.state().getRawParameterValue("t1_l2dest")->load() < 0.5f;
+        }
+        const bool ok = bypass == 0.0f && maxDiff <= 1.0 && share > 0.97 && std::abs(lo2 - 32.0) < 1.0 && std::abs(hi2 - 96.0) < 1.0
+                        && std::abs(loB - 32.0) < 1.0 && std::abs(hiB - 96.0) < 1.0   // depth +8 each: +-16 + +-16 && hHi - hLo < 0.1 && oHi - oLo < 0.01 && fHi - fLo < 0.01
+                        && std::abs(sync120 - 16) <= 1 && std::abs(sync240 - 32) <= 1 && std::abs(free240 - 16) <= 1
+                        && std::abs((mLo + mHi) / 2 - 32.0) < 1.0 && std::abs(pHi - pLo - 8.0) < 0.5 && presetOff;
+        std::printf("lfo 2: off bit-exact (max difference %g); against LFO 1 on pan at its settings, 6 waveforms: "
+                    "triangle and sine within %.3f knob steps, %.1f%% of all blocks within 1 step, triangle %.1f..%.1f; with LFO 1 they add (%.1f..%.1f); Hold %.3f, One %.3f and Half %.3f still after; "
+                    "half-cycles in 16 s synced at 120 / 240 BPM %d / %d (16 / 32), free at 240 %d (16); knob to 32: centre %.1f; Pitch depth +2: "
+                    "+-%.2f st; cutoff x64: largest step %.2f a block; old preset off %d -> %s\n",
+                    bypass, maxDiff, share * 100, lo2, hi2, loB, hiB, hHi - hLo, oHi - oLo, fHi - fLo, sync120, sync240, free240,
+                    (mLo + mHi) / 2, (pHi - pLo) / 2, maxStep, presetOff, ok ? "PASS" : "FAIL");
+    }
+
     // the Syntakt amp envelope (NOTES.md step 44): off is the old sound,
     // bit for bit; on, its gain is the ratio of a render with it to one
     // without, block by block (Tone, its own Decay infinite)
@@ -1404,6 +1570,22 @@ int main(int argc, char** argv)
         }
         e->setTwinPage2(false);
         proc.state().getParameter("t1_machine")->setValueNotifyingHost(m0);
+    }
+
+    // the LFO 2 page: on the cutoff, a triangle, Trig
+    {
+        e->showPage(0);
+        for (auto [id, v] : {std::pair<const char*, float>{"t1_l2dest", 11}, {"t1_l2depth", 80}, {"t1_l2reset", 1}})
+            cyclesemu::setPlain(proc.state(), id, v);
+        e->setLfo2View(true);
+        auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
+        auto f = out.getChildFile("editor-lfo2.png");
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        e->setLfo2View(false);
+        for (auto [id, v] : {std::pair<const char*, float>{"t1_l2dest", 0}, {"t1_l2depth", 64}, {"t1_l2reset", 0}})
+            cyclesemu::setPlain(proc.state(), id, v);
     }
 
     // the AMP page, the envelope on (ADSR)

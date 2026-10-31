@@ -228,6 +228,26 @@ const std::map<juce::String, HelpText> kHelp = {
      {"Amp Env Reset",
       "On (the Syntakt's default): each new note fades the old level out over 0.7 ms and starts the attack from "
       "silence. Off: a new note carries on from the level it is at."}},
+    {"l2dest",
+     {"LFO 2 Destination",
+      "LFO 2 is the plugin's own, beside the firmware's LFO (the LFO 2 button in the LFO header shows it). It adds "
+      "to the knob, after velocity and key tracking, without moving the knob itself. Off by default. It moves "
+      "the sound and filter knobs (Pitch in semitones), and works the same with LFO 1 on the same knob: the two add."}},
+    {"l2wave", {"LFO 2 Waveform", "Triangle, sine, square, saw, Env (one way down), ramp, or random steps, as drawn."}},
+    {"l2reset",
+     {"LFO 2 Trig Mode",
+      "What a note does, as on LFO 1 (measured there): Free, nothing. Trig, restarts at the start phase. Hold, "
+      "freezes the value it had at the note. One, plays one cycle from the note and stops. Half, half a cycle."}},
+    {"l2sync",
+     {"LFO 2 Sync", "Synced: the rate follows the tempo. Free: the same rates as if at 120 BPM, whatever the tempo."}},
+    {"l2mult", {"LFO 2 Multiplier", "Multiplies the rate, 1 to 2k: speed x multiplier / 128 cycles a bar, as LFO 1."}},
+    {"l2speed",
+     {"LFO 2 Speed", "The rate, with the multiplier: 32 x 4 is one cycle a bar. Negative runs the waveform backwards."}},
+    {"l2depth",
+     {"LFO 2 Depth",
+      "How far it moves the knob: each step is 2 knob steps either way, as LFO 1 (32 sweeps the whole range). "
+      "Negative turns the waveform upside down. No fade yet: LFO 1's fade law is not measured well enough to copy."}},
+    {"l2phase", {"LFO 2 Start Phase", "Where in the waveform a note restarts it (Trig, One, Half). 64 is halfway."}},
     {"dice",
      {"Randomise",
       "Draws new settings for this section, weighted toward sweet spots: musical pitches and LFO rates, sends "

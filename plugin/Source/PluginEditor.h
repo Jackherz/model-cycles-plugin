@@ -129,7 +129,8 @@ private:
 class LfoScope : public juce::Component, private juce::Timer
 {
 public:
-    LfoScope(CyclesEmuProcessor&, int track);
+    // prefix: "lfo" the firmware's LFO, "l2" LFO 2 (which has no fade)
+    LfoScope(CyclesEmuProcessor&, int track, const char* prefix = "lfo");
     void paint(juce::Graphics&) override;
 
 private:
@@ -225,13 +226,14 @@ public:
     void refreshTwinNames();   // the Sample knobs' names, after a new sample folder
     void setTwinPage2(bool p2) { twinOnPage2 = p2; showTwinPage(); }   // tests
     void setAmpView(bool on) { showAmpView(on); }                      // tests
+    void setLfo2View(bool on) { showLfo2(on); }                        // tests
     std::function<void(const juce::String&)> beforeChange;   // the editor's undo snapshot
     void resized() override;
 
 private:
     std::vector<std::unique_ptr<ParamControl>> controls;
     Section sound{"SOUND"}, lfo{"LFO"}, filter{"FILTER"}, glide{"GLIDE"};
-    LfoScope scope;
+    LfoScope scope, scope2;   // LFO 1 (the firmware's) and LFO 2 (the plugin's, step 45)
     FilterScope filterScope;
     // the machine knobs (color, shape, sweep, contour) and punch, relabelled
     // for the Syntakt engines, which map them to parameters of their own
@@ -248,6 +250,12 @@ private:
     std::vector<ParamControl*> filterControls, ampControls;
     std::unique_ptr<juce::ParameterAttachment> ampModeAtt;   // greys out what the mode does not use
     void showAmpView(bool);
+    // the LFO section's other page: LFO 2
+    juce::TextButton lfoPage{"LFO 2"};
+    bool lfo2View = false;
+    std::vector<ParamControl*> lfo1Controls, lfo2Controls;
+    ParamControl* dest2Control = nullptr;   // LFO 2's destination: its names follow the machine too
+    void showLfo2(bool);
     CyclesEmuProcessor* processor = nullptr;
     ParamControl* destControl = nullptr;   // the LFO destination: its names follow the machine
     ModPanel modPanel;
@@ -342,6 +350,7 @@ public:
     void showSoundSetup(bool);   // the current track page's SOUND SETUP panel
     void setTwinPage2(bool);     // tests: SP TWINSHOT's page on the current track page
     void setAmpView(bool);       // tests: the FILTER section's AMP page on the current track page
+    void setLfo2View(bool);      // tests: the LFO section's LFO 2 page on the current track page
     void updateTrigLights();    // run by the timer; public for the tests
     bool tabLit(int index) const { return tabs[index]->getProperties()["lit"]; }
     void showHelpFor(const juce::String& paramID);   // help mode on, as if hovering that control
