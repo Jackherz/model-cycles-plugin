@@ -1301,7 +1301,35 @@ int main(int argc, char** argv)
                                  {"t1_l2dest", 8}, {"t1_l2reset", 1}, {"t1_l2mult", 2}, {"t1_l2speed", 96}, {"t1_l2depth", 72}},
                                 late, 4600, pan);
         auto [loB, hiB] = range(both, 1520, 4600);
-        // trig modes: Hold freezes at the note; One stops after a cycle, Half after half (a cycle = 3000 blocks)
+        // One and Half against LFO 1 (NOTES.md step 47): from the note on to the waveform's end (One) or
+        // middle (Half), then still at 0 (Ramp after Half: its peak); start phases 0 and 96, backwards too
+        double oneShare = 0, oneAfter = 0;
+        {
+            int in = 0, all = 0;
+            for (int wave : {0, 2, 3, 5})
+                for (int m : {3, 4})
+                    for (auto [ph, sp] : {std::pair{0, 96}, std::pair{96, 96}, std::pair{32, 32}})
+                    {
+                        if (sp == 32 && wave != 3)
+                            continue;
+                        auto l1 = words({{"t1_lfodest", 13}, {"t1_lfowave", (float)wave}, {"t1_lforeset", (float)m}, {"t1_lfosync", 0},
+                                         {"t1_lfomult", 2}, {"t1_lfospeed", (float)sp}, {"t1_lfodepth", 80}, {"t1_lfophase", (float)ph}},
+                                        late, 5100, pan).first;
+                        auto l2 = words({{"t1_l2dest", 8}, {"t1_l2wave", (float)wave}, {"t1_l2reset", (float)m}, {"t1_l2sync", 0},
+                                         {"t1_l2mult", 2}, {"t1_l2speed", (float)sp}, {"t1_l2depth", 80}, {"t1_l2phase", (float)ph}},
+                                        late, 5100, pan).first;
+                        for (int b = 1520; b < 5100; ++b)
+                        {
+                            const double d = std::abs(l1[(size_t)b] - l2[(size_t)b]);
+                            in += d <= 1.0;
+                            ++all;
+                            if (b >= 4600)   // stopped, whatever the start
+                                oneAfter = std::max(oneAfter, d);
+                        }
+                    }
+            oneShare = (double)in / all;
+        }
+        // trig modes: Hold freezes at the note; One and Half stop (a cycle = 3000 blocks)
         auto mode = [&](int m) {
             return words({{"t1_l2dest", 8}, {"t1_l2wave", 0}, {"t1_l2reset", (float)m}, {"t1_l2mult", 2}, {"t1_l2speed", 96},
                           {"t1_l2depth", 80}}, {{1000, 60}}, 6000, pan).first;
@@ -1403,14 +1431,16 @@ int main(int argc, char** argv)
             presetOff = f.state().getRawParameterValue("t1_l2dest")->load() < 0.5f;
         }
         const bool ok = bypass == 0.0f && maxDiff <= 1.0 && share > 0.97 && std::abs(lo2 - 32.0) < 1.0 && std::abs(hi2 - 96.0) < 1.0
-                        && std::abs(loB - 32.0) < 1.0 && std::abs(hiB - 96.0) < 1.0   // depth +8 each: +-16 + +-16 && hHi - hLo < 0.1 && oHi - oLo < 0.01 && fHi - fLo < 0.01
+                        && std::abs(loB - 32.0) < 1.0 && std::abs(hiB - 96.0) < 1.0   // depth +8 each: +-16 + +-16
+                        && hHi - hLo < 0.1 && oHi - oLo < 0.01 && fHi - fLo < 0.01 && oneShare > 0.97 && oneAfter < 0.5
                         && std::abs(sync120 - 16) <= 1 && std::abs(sync240 - 32) <= 1 && std::abs(free240 - 16) <= 1
                         && std::abs((mLo + mHi) / 2 - 32.0) < 1.0 && std::abs(pHi - pLo - 8.0) < 0.5 && presetOff;
         std::printf("lfo 2: off bit-exact (max difference %g); against LFO 1 on pan at its settings, 6 waveforms: "
                     "triangle and sine within %.3f knob steps, %.1f%% of all blocks within 1 step, triangle %.1f..%.1f; with LFO 1 they add (%.1f..%.1f); Hold %.3f, One %.3f and Half %.3f still after; "
+                    "One/Half against LFO 1: %.1f%% of blocks within 1 step, stopped within %.3f; "
                     "half-cycles in 16 s synced at 120 / 240 BPM %d / %d (16 / 32), free at 240 %d (16); knob to 32: centre %.1f; Pitch depth +2: "
                     "+-%.2f st; cutoff x64: largest step %.2f a block; old preset off %d -> %s\n",
-                    bypass, maxDiff, share * 100, lo2, hi2, loB, hiB, hHi - hLo, oHi - oLo, fHi - fLo, sync120, sync240, free240,
+                    bypass, maxDiff, share * 100, lo2, hi2, loB, hiB, hHi - hLo, oHi - oLo, fHi - fLo, oneShare * 100, oneAfter, sync120, sync240, free240,
                     (mLo + mHi) / 2, (pHi - pLo) / 2, maxStep, presetOff, ok ? "PASS" : "FAIL");
     }
 

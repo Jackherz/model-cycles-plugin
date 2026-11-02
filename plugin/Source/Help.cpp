@@ -108,8 +108,9 @@ const std::map<juce::String, HelpText> kHelp = {
     {"lforeset",
      {"LFO Trig Mode",
       "What a note does to the LFO. Free: nothing, it keeps running. Trig: restarts it. Hold: freezes it at "
-      "its current value. One: plays one cycle, then stops. Half: plays half a cycle. (Names as on other "
-      "Elektron machines, unverified here.)"}},
+      "its current value. One: from the note, runs on to the end of the waveform, then stops at 0 (like an "
+      "envelope). Half: runs on to the middle of the waveform, then stops. With a start phase, the run is "
+      "shorter: from the start phase to the end (or middle)."}},
     {"lfosync",
      {"LFO Sync",
       "Sync: the LFO rate follows the tempo. Free: the same rates, fixed as if at 120 BPM, whatever the "
@@ -237,7 +238,7 @@ const std::map<juce::String, HelpText> kHelp = {
     {"l2reset",
      {"LFO 2 Trig Mode",
       "What a note does, as on LFO 1 (measured there): Free, nothing. Trig, restarts at the start phase. Hold, "
-      "freezes the value it had at the note. One, plays one cycle from the note and stops. Half, half a cycle."}},
+      "freezes the value it had at the note. One, from the note on to the end of the waveform, then stops at 0. Half, on to its middle."}},
     {"l2sync",
      {"LFO 2 Sync", "Synced: the rate follows the tempo. Free: the same rates as if at 120 BPM, whatever the tempo."}},
     {"l2mult", {"LFO 2 Multiplier", "Multiplies the rate, 1 to 2k: speed x multiplier / 128 cycles a bar, as LFO 1."}},

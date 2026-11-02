@@ -1090,8 +1090,9 @@ void CyclesEmuProcessor::updateGlides()
 // 120 BPM when free; negative speeds run backwards), depth +-2 knob steps
 // a step (Pitch: semitones), and the trig modes Free (a note changes
 // nothing), Trig (restarts at the start phase), Hold (freezes the value
-// at the note), One and Half (a cycle or half of one from the note, then
-// stop). The waveforms are the LFO display's (LfoShape.h).
+// at the note), One and Half (from the note on to the waveform's end or
+// middle, then stop at 0; lfoOneShotLength). The waveforms are the LFO
+// display's (LfoShape.h).
 void CyclesEmuProcessor::updateExtraLfos()
 {
     for (int t = 0; t < kTracks; ++t)
@@ -1115,22 +1116,16 @@ void CyclesEmuProcessor::updateExtraLfos()
                 value = lfoWave(wave, s.sinceNote + start);
             else if (mode == 2)   // Hold: the free-running LFO, frozen at each note
                 value = s.triggered ? s.held : lfoWave(wave, s.free + start);
-            else if (mode == 0 || !s.triggered)   // Free, or nothing triggered yet
-                value = mode == 0 || mode == 1 ? lfoWave(wave, s.free + start) : lfoWave(wave, start);
-            else
+            else if (mode == 0 || (mode == 1 && !s.triggered))   // Free, or Trig before any note
+                value = lfoWave(wave, s.free + start);
+            else if (s.running && s.left > 0.0)   // Trig, or One and Half on their way
             {
-                if (s.running)
-                {
-                    s.phase += step;
-                    const double len = mode == 3 ? 1.0 : mode == 4 ? 0.5 : 1e300;
-                    if (std::abs(s.phase - s.start) >= len)
-                    {
-                        s.phase = s.start + (step < 0 ? -len : len);
-                        s.running = false;
-                    }
-                }
-                value = lfoWave(wave, s.phase);
+                s.phase += step;
+                s.left -= std::abs(step);
+                value = mode == 1 || s.left > 0.0 ? lfoWave(wave, s.phase) : lfoStoppedValue(wave, mode);
             }
+            else   // One and Half stopped (the firmware's also sit there before a note)
+                value = mode == 1 ? lfoWave(wave, s.phase) : lfoStoppedValue(wave, mode);
             if (dest == 0 || depth == 0)
                 continue;
             const double amount = 2.0 * depth * value;   // knob steps
@@ -1144,6 +1139,8 @@ void CyclesEmuProcessor::updateExtraLfos()
             {
                 lfoOffset[t][k] = off[k];
                 writeWord(t, k);
+                if (off[k] == 0.0)   // back to the knob (One, Half stopped): at once, as LFO 1
+                    mc_engine_snap_param(eng(t), loc(t), 0x14 + 2 * k);
             }
         if (pitch != lfoPitch[t])
         {
@@ -1163,6 +1160,7 @@ void CyclesEmuProcessor::extraLfoNote(int track)
         s.triggered = true;
         s.start = s.phase = v(7) / 128.0;
         s.running = true;
+        s.left = v(1) == 3 || v(1) == 4 ? lfoOneShotLength(v(1), s.start, v(5) < 64) : 1e300;
         s.held = lfoWave(v(0), lfoFromNote(v(0)) ? s.sinceNote + s.start : s.free + s.start);
         s.sinceNote = 0;
     }

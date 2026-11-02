@@ -1996,6 +1996,41 @@ shared delay and reverb if possible.
   (9.9 %; 185 us with one engine before), 8 playing 304 us (11.4 %). The
   second engine always runs, to stay in step.
 
+## Step 47: LFO trig modes One and Half, as the firmware runs them (2026-11-02)
+
+The owner reported that One did not behave like the Syntakt's. The Syntakt
+manual (OS 1.42) says: One "starts when a note is trigged, then runs to the
+end of the waveform and then stops"; Half runs "to the middle of the
+waveform". Measured on the Cycles firmware's own LFO (LFO 1, the pan word,
+a cycle = 3000 blocks, start phases 0/32/64/96, speeds +32 and -32):
+
+- One stops at the waveform's end (phase 1.0) in the direction it runs:
+  from start phase 64 it runs half a cycle, from 96 a quarter, from 0 a
+  whole one. Backwards, it stops at phase 0 (from 32: a quarter).
+- Half stops at the next middle (phase 0.5); from a start phase of 64 it
+  runs a whole cycle (to 1.5); from 96, three quarters.
+- Once stopped the output is 0 for every waveform (saw, square and random
+  included), except Ramp after Half, which holds its peak (+1).
+- Before any note, One sits at 0: it ran from power-on and stopped.
+- A note while it runs restarts it at the start phase.
+
+LFO 2 had run a whole (or half) cycle from the start phase and then held
+the waveform's value there (a saw held +1, a square +1). It now follows the
+rules above (LfoShape.h: lfoOneShotLength, lfoStoppedValue), and the LFO
+display draws both LFOs that way (it drew LFO 1 the old way too). The
+EditorShot "lfo 2" test compares One and Half on LFO 2 against LFO 1
+(triangle, square, saw, ramp; start phases 0 and 96, saw backwards from 32).
+That test's `ok` had a `//` comment in the middle of the expression, which
+switched off its Hold/One/Half checks; fixed. The test then found LFO 2
+gliding back to the knob through the smoother once its offset fell to 0
+(about 70 blocks); the firmware's LFO lands at once, and LFO 2 now snaps
+there too. Against LFO 1: 100% of blocks within a knob step, 0.004 once
+stopped. EditorShot 33, HostTest 8, LoadTest 11, auval x3; installed.
+
+Measured on the Cycles firmware, which the Syntakt manual's wording
+matches; the Syntakt's own LFO was not run, so its stop value (0) is
+assumed to be the same.
+
 ## Next steps
 
 Owner's notes for a later build (2026-10-31, after step 44):

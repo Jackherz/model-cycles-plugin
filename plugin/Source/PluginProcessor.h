@@ -306,6 +306,7 @@ private:
     {
         double free = 0, phase = 0, start = 0;   // cycles: the free-running phase, the triggered one
         double sinceNote = 1e9;                  // cycles since the last note (Env falls from it)
+        double left = 0;                         // cycles One and Half have still to run
         bool triggered = false, running = false;
         float held = 0;
     } extraLfo[cyclesemu::kTracks][kExtraLfos];

@@ -3,7 +3,7 @@
 // Triangle and sine start at 0 going up, square high first, saw falling from
 // +1, Env a single fall from 1 after each note, Ramp a rise over the first
 // half of each cycle, Random 16 held steps a cycle (its values are not the
-// firmware's sequence).
+// firmware's sequence). One and Half as the firmware runs them (step 47).
 #pragma once
 
 #include <cmath>
@@ -42,4 +42,19 @@ inline float lfoWave(int wave, double phase)
         }
     }
 }
+// One (trig mode 3) and Half (4): from the note, run on to the waveform's
+// end (One) or middle (Half) in the direction the LFO runs, then stop. A
+// start phase at that point runs a whole cycle. Cycles from the note to the
+// stop (start: the start phase in cycles).
+inline double lfoOneShotLength(int mode, double start, bool backwards)
+{
+    const double to = mode == 3 ? 0.0 : 0.5;
+    double d = backwards ? start - to : to - start;
+    d -= std::floor(d);
+    return d > 1e-9 ? d : 1.0;
+}
+
+// what One and Half hold once stopped (and before the first note): 0, but
+// Ramp holds its peak after Half
+inline float lfoStoppedValue(int wave, int mode) { return mode == 4 && wave == 5 ? 1.0f : 0.0f; }
 } // namespace cyclesemu

@@ -336,12 +336,12 @@ float LfoScope::valueAt(const State& s, double t, double window) const
     double run = t;
     if (s.trig == 2)
         run = 0.0;                     // Hold: frozen at the note
-    else if (s.trig == 3)
-        run = juce::jmin(t, 1.0);      // One
-    else if (s.trig == 4)
-        run = juce::jmin(t, 0.5);      // Half
     double dir = s.speed >= 64 ? 1.0 : -1.0;
-    float v = lfoWave(s.wave, s.phase / 128.0 + dir * run) * (float)(s.depth - 64) / 64.0f;
+    float v = lfoWave(s.wave, s.phase / 128.0 + dir * run);
+    if ((s.trig == 3 || s.trig == 4) && !lfoFromNote(s.wave)
+        && t >= lfoOneShotLength(s.trig, s.phase / 128.0, dir < 0))   // One, Half: stopped
+        v = lfoStoppedValue(s.wave, s.trig);
+    v *= (float)(s.depth - 64) / 64.0f;
     if (int f = s.fade - 64; f != 0)
     {
         double len = std::abs(f) / 64.0 * window;
