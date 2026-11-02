@@ -1231,7 +1231,7 @@ void MixerPage::paint(juce::Graphics& g)
         auto head = s.withHeight(20).reduced(10, 0);
         g.setColour(kAccents[t]);
         g.fillRect(head.getX(), head.getY() + 5, 8, 8);
-        drawText(g, "Track " + juce::String(t + 1), head.withTrimmedLeft(14), juce::Justification::centredLeft, kText);
+        drawText(g, "Trk " + juce::String(t + 1), head.withTrimmedLeft(14), juce::Justification::centredLeft, kText);   // (eight strips: short)
         if (t > 0)
         {
             g.setColour(kShadow);
@@ -1591,11 +1591,11 @@ CyclesEmuEditor::CyclesEmuEditor(CyclesEmuProcessor& p) : AudioProcessorEditor(p
     {
         auto* tp = new TrackPage(p, i);
         tp->beforeChange = [this](const juce::String& what) { remember(what); };
-        addPage(proc.isVoice() ? juce::String("Voice") : "Track " + juce::String(i + 1), kAccents[i], tp);
+        addPage(proc.isVoice() ? juce::String("Voice") : "Trk " + juce::String(i + 1), kAccents[i], tp);   // eight fit
     }
     if (!proc.isVoice() && !proc.isFx())
-        addPage("Mix", kAccents[6], new MixerPage(p));
-    addPage("FX", kAccents[6], new FxPage(st));
+        addPage("Mix", kAccentFx, new MixerPage(p));
+    addPage("FX", kAccentFx, new FxPage(st));
     // tabs above the panel's edge, so the selected one opens into it
     for (auto* b : tabs)
         addAndMakeVisible(b);
@@ -1718,8 +1718,8 @@ void CyclesEmuEditor::paint(juce::Graphics& g)
     const bool onTrack = current < proc.trackPages();
     juce::String where = !onTrack ? juce::String(dynamic_cast<MixerPage*>(pages[current]) ? "Mixer" : "Send FX")
                          : proc.isVoice() ? juce::String(juce::roundToInt(proc.state().getRawParameterValue("voices")->load())) + " voices"
-                                          : "Track " + juce::String(current + 1) + " of 6";
-    g.setColour(kAccents[onTrack ? current : 6]);
+                                          : "Track " + juce::String(current + 1) + " of " + juce::String(kTracks);
+    g.setColour(onTrack ? kAccents[current] : kAccentFx);
     g.fillRect(right.getX() + 8, right.getCentreY() - 4, 8, 8);
     drawText(g, where, right.withTrimmedLeft(24), juce::Justification::centredLeft, kText);
 }

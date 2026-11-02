@@ -54,6 +54,12 @@ struct mc_engine {
     void *fx_user;
     int fx_on[2];
     float fx_in[2][64];
+    /* one delay and reverb for two engines (mc_engine_share): a donor's send
+     * buses (Q31), captured before its effects, which it then silences; the
+     * receiver adds them into its own before its effects run */
+    int share;                   /* 0 off, 1 donor, 2 receiver */
+    int32_t share_bus[2][64];
+    const int32_t *share_from[2];
     struct tf_state {
         double ic1, ic2;             /* the SVF's integrators */
         double g, k, w;              /* coefficients and wet share where the last block ended */
@@ -486,9 +492,38 @@ static void amp_after(mc_engine *g)
 #endif
 }
 
+static void share_hook(mc_engine *g, uint32_t pc)
+{
+    const int which = pc == FX_HOOK_DELAY || pc == FX_HOOK_DELAY_DONE ? 0 : 1;
+    const int pre = pc == FX_HOOK_DELAY || pc == FX_HOOK_REVERB;
+    if (g->share == 1) {
+        if (pre)                                 /* its sends, for the receiver; its own effect gets
+                                                  * silence, so its delay line holds nothing to feed
+                                                  * back into its bus (measured: the donor's delay
+                                                  * echoes doubled the receiver's feedback) */
+            for (int i = 0; i < 64; i++) {
+                g->share_bus[which][i] = (int32_t)mc_ld32(g->x, SEND_BUS + 4 * i);
+                mc_st32_raw(g->x, SEND_BUS + 4 * i, 0);
+            }
+        else                                     /* and no effect of its own: its delay's return is not
+                                                  * summed into its reverb bus either (it comes after) */
+            for (int i = 0; i < 64; i++)
+                mc_st32_raw(g->x, (which ? REVERB_OUT : DELAY_OUT) + 4 * i, 0);
+    } else if (g->share == 2 && pre && g->share_from[which]) {
+        for (int i = 0; i < 64; i++) {
+            const uint32_t a = SEND_BUS + 4 * i;
+            int64_t v = (int64_t)(int32_t)mc_ld32(g->x, a) + g->share_from[which][i];
+            v = v > 2147483647 ? 2147483647 : v < -2147483648LL ? -2147483648LL : v;
+            mc_st32_raw(g->x, a, (uint32_t)(int32_t)v);
+        }
+    }
+}
+
 static void engine_hook(mc_ctx *x, uint32_t pc)
 {
     mc_engine *g = x->hook_user;
+    if (g->share && pc != TF_HOOK_BEFORE && pc != TF_HOOK_AFTER)
+        share_hook(g, pc);                       /* the donor's sends first, then the host's input */
     if (pc == TF_HOOK_BEFORE || pc == TF_HOOK_AFTER) {
         if (g->smooth_filter)
             (pc == TF_HOOK_BEFORE ? tf_before : tf_after)(g);
@@ -503,12 +538,14 @@ static void engine_hook(mc_ctx *x, uint32_t pc)
 
 static void engine_update_hook(mc_engine *g)
 {
-    g->x->hook = g->in_l || g->smooth_filter || g->fx_on[0] || g->fx_on[1] || g->amp_any ? engine_hook : NULL;
+    g->x->hook = g->in_l || g->smooth_filter || g->fx_on[0] || g->fx_on[1] || g->amp_any || g->share ? engine_hook : NULL;
     g->x->hook_user = g;
 }
 
 void mc_engine_set_fx(mc_engine *g, mc_fx_fn fn, void *user, int delay_on, int reverb_on)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     g->fx_fn = fn;
     g->fx_user = user;
     g->fx_on[0] = delay_on && fn;
@@ -518,6 +555,8 @@ void mc_engine_set_fx(mc_engine *g, mc_fx_fn fn, void *user, int delay_on, int r
 
 void mc_engine_snap_param(mc_engine *g, int track, int offset)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     /* the firmware's smoother set to a sound word itself, so a change made
      * at a trigger lands at once instead of sliding: its 32-bit state
      * (SMOOTH_STATE + 132 t + 4 k, the word in the top half, found by
@@ -533,6 +572,8 @@ void mc_engine_snap_param(mc_engine *g, int track, int offset)
 
 void mc_engine_set_smooth_filter(mc_engine *g, int on)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     g->smooth_filter = on;
     for (int t = 0; t < 6; t++) {    /* from rest, keeping each track's type */
         const int type = g->tf[t].type, extra = g->tf[t].extra;
@@ -588,12 +629,16 @@ double mc_filter_db(int type, double v, double r, double extra, double hz)
 
 void mc_engine_set_filter_key(mc_engine *g, int track, double semitones)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (track >= 0 && track <= 5)
         g->tf[track].key = semitones;
 }
 
 void mc_engine_set_filter(mc_engine *g, int track, int type, int extra)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (track < 0 || track > 5)
         return;
     g->tf[track].type = type < 0 ? 0 : type > FT_COMBP ? FT_COMBP : type;
@@ -602,6 +647,8 @@ void mc_engine_set_filter(mc_engine *g, int track, int type, int extra)
 
 void mc_engine_set_input(mc_engine *g, const float *l, const float *r, float delaySend, float reverbSend)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     g->in_l = l;
     g->in_r = r;
     g->in_delay = delaySend;
@@ -685,11 +732,15 @@ static int call(mc_engine *g, uint32_t func, const uint32_t *args, int nargs)
 
 int mc_engine_param(mc_engine *g, int track, int offset, int value)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     return mc_engine_param_word(g, track, offset, value << 8);
 }
 
 int mc_engine_param_word(mc_engine *g, int track, int offset, int word)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     mc_ctx *x = g->x;
     if (track < 0 || track > 6)
         return -1;
@@ -706,6 +757,8 @@ int mc_engine_param_word(mc_engine *g, int track, int offset, int word)
 
 int mc_engine_level(mc_engine *g, int track, int value)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     uint32_t v = (uint32_t)value << 8;
     mc_st16_raw(g->x, g->kit + 0x10 + 2 * track, v);
     uint32_t a[2] = {(uint32_t)track, v};
@@ -714,6 +767,8 @@ int mc_engine_level(mc_engine *g, int track, int value)
 
 int mc_engine_mute(mc_engine *g, int track, int muted)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     uint32_t m = mc_ld32(g->x, MUTE_STATE + 0x14);
     m = muted ? (m | (1u << track)) : (m & ~(1u << track));
     mc_st32_raw(g->x, MUTE_STATE + 0x14, m);
@@ -723,6 +778,8 @@ int mc_engine_mute(mc_engine *g, int track, int muted)
 
 int mc_engine_note(mc_engine *g, int track, int note, int velocity, int on, uint32_t trig_flags)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     uint32_t w[14] = {0};
     w[0] = (uint32_t)track;
     w[1] = (uint32_t)note;
@@ -740,6 +797,8 @@ int mc_engine_note(mc_engine *g, int track, int note, int velocity, int on, uint
 
 int mc_engine_render(mc_engine *g, float *left, float *right)
 {
+    if (!g)
+        return -1;   /* no engine (e.g. CyclesFX's second): nothing */
     mc_ctx *x = g->x;
     uint32_t half = (g->blocks + (uint64_t)g->phase) & 1 ? 0x4a3ed180u : 0x4a3ed080u;   /* DMA plays */
     mc_st32_raw(x, ISR_WORDS, 0);
@@ -786,6 +845,8 @@ int mc_engine_render(mc_engine *g, float *left, float *right)
 
 void mc_engine_set_tempo(mc_engine *g, double bpm)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     long t = (long)(bpm * 120.0 + 0.5);
     if (t < 3600) t = 3600;
     if (t > 36000) t = 36000;
@@ -797,38 +858,54 @@ void mc_engine_set_tempo(mc_engine *g, double bpm)
 
 double mc_engine_get_tempo(mc_engine *g)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     return mc_ld32(g->x, CLOCK_RATE) / 120.0;
 }
 
 int mc_engine_get_param(mc_engine *g, int track, int offset)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     uint32_t a = track < 6 ? g->kit + 0x1c + 100 * track + offset : g->kit + 0x274 + offset;
     return (int)(mc_ld16(g->x, a) >> 8);
 }
 
 int mc_engine_get_level(mc_engine *g, int track)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     return (int)(mc_ld16(g->x, g->kit + 0x10 + 2 * track) >> 8);
 }
 
 int mc_engine_get_mute(mc_engine *g, int track)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     return (int)((mc_ld32(g->x, MUTE_STATE + 0x14) >> track) & 1);
 }
 
-uint32_t mc_engine_kit(mc_engine *g) { return g->kit; }
+uint32_t mc_engine_kit(mc_engine *g) { return g ? g->kit : 0; }
 
 int mc_engine_peek(mc_engine *g, uint32_t addr)
 {
+    if (!g)
+        return 0;   /* no engine (e.g. CyclesFX's second): nothing */
     uint8_t b;
     mc_mem_read(g->x, addr, &b, 1);
     return b;
 }
 
-void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n) { mc_mem_read(g->x, addr, dst, n); }
+void mc_engine_read(mc_engine *g, uint32_t addr, void *dst, uint32_t n)
+{
+    if (g)   /* (none: dst as it was) */
+        mc_mem_read(g->x, addr, dst, n);
+}
 
 void mc_engine_write(mc_engine *g, uint32_t addr, const void *src, uint32_t n)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (addr < MC_MMIO_BASE && n <= MC_MMIO_BASE - addr)   /* memory only, never a peripheral */
         memcpy(g->x->mem + addr, src, n);
 }
@@ -841,16 +918,20 @@ void mc_engine_write(mc_engine *g, uint32_t addr, const void *src, uint32_t n)
 
 void mc_engine_twin_param(mc_engine *g, int track, int which, int value)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (track < 0 || track >= 6 || which < 0 || which > 1)
         return;
     value = value < 0 ? 0 : value > 127 ? 127 : value;
     mc_st16_raw(g->x, TWIN_PARAMS + 4 * track + 2 * which, (uint16_t)(value << 8));
 }
 
-int mc_engine_amp_available(mc_engine *g) { return g->sx != NULL; }
+int mc_engine_amp_available(mc_engine *g) { return g && g->sx != NULL; }
 
 void mc_engine_set_amp(mc_engine *g, int track, int on, int atk, int hold, int dec, int sus, int rel, int mode, int aenr)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (!g->sx || track < 0 || track >= 6)
         return;
     const uint32_t p = ST_PAR + 32 * track;
@@ -873,9 +954,23 @@ void mc_engine_set_amp(mc_engine *g, int track, int on, int atk, int hold, int d
 
 void mc_engine_amp_event(mc_engine *g, int track, int trig, int release, int kill)
 {
+    if (!g)
+        return;   /* no engine (e.g. CyclesFX's second): nothing */
     if (track < 0 || track >= 6)
         return;
     g->amp_ev[track][0] |= trig != 0;
     g->amp_ev[track][1] |= release != 0;
     g->amp_ev[track][2] |= kill != 0;
+}
+
+void mc_engine_share(mc_engine *donor, mc_engine *receiver)
+{
+    if (!donor || !receiver)
+        return;
+    donor->share = 1;
+    receiver->share = 2;
+    receiver->share_from[0] = donor->share_bus[0];
+    receiver->share_from[1] = donor->share_bus[1];
+    engine_update_hook(donor);
+    engine_update_hook(receiver);
 }

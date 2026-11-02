@@ -11,7 +11,11 @@
 
 namespace cyclesemu
 {
-constexpr int kTracks = 6;
+// Eight tracks (NOTES.md step 46): the engine has six, so tracks 1-6 are the
+// first engine's and 7-8 the second's 0-1 (CyclesEmuProcessor::eng / loc),
+// sharing the first engine's delay and reverb (mc_engine_share)
+constexpr int kTracks = 8;
+constexpr int kEngineTracks = 6;
 constexpr int kBlock = 32;
 
 // How a host parameter reaches the engine.
@@ -169,12 +173,12 @@ public:
     bool twinInstalled() const { return !twinPending.load(); }
     // the Syntakt amp envelope: in this build and engine state (syntakt-dsp.bin)
     bool ampAvailable() const { return engine != nullptr && mc_engine_amp_available(engine) != 0; }
-    void pokeWord(int track, int offset, int word) { mc_engine_param_word(engine, track, offset, word); }
+    void pokeWord(int track, int offset, int word) { mc_engine_param_word(eng(track), loc(track), offset, word); }
     uint32_t kitAddress() const { return mc_engine_kit(engine); }
     int engineValue(int track, int offset) const
     {
-        return offset == -1 ? mc_engine_get_level(engine, track)
-               : offset == -2 ? mc_engine_get_mute(engine, track) : mc_engine_get_param(engine, track, offset);
+        return offset == -1 ? mc_engine_get_level(eng(track), loc(track))
+               : offset == -2 ? mc_engine_get_mute(eng(track), loc(track)) : mc_engine_get_param(eng(track), loc(track), offset);
     }
     // the output's peak over the last callback (0..), for the editor's meter
     float outputPeak() const { return outPeak.load(std::memory_order_relaxed); }
@@ -205,7 +209,10 @@ private:
     void renderEngineBlock();
     int paramValue(int track, const char* id) const;
 
-    mc_engine* engine = nullptr;
+    mc_engine* engine = nullptr;    // tracks 1-6, the delay and reverb
+    mc_engine* engine2 = nullptr;   // tracks 7-8 (its 0-1; its 2-5 muted), not in CyclesFX
+    mc_engine* eng(int track) const { return track < cyclesemu::kEngineTracks ? engine : engine2; }
+    static int loc(int track) { return track < cyclesemu::kEngineTracks ? track : track - cyclesemu::kEngineTracks; }
     // CyclesVoice: the tracks as voices; the oldest free (or, all busy, the
     // oldest playing) voice takes the next note
     struct Voice
@@ -280,9 +287,9 @@ private:
     // trigs, so a track that should be silent (muted, or soloed out) has its
     // engine level held at 0, and its level is restored when it should play
     // again (audio thread only)
-    int levelNow[cyclesemu::kTracks] = {100, 100, 100, 100, 100, 100};
+    int levelNow[cyclesemu::kTracks] = {100, 100, 100, 100, 100, 100, 100, 100};
     bool mutedNow[cyclesemu::kTracks] = {}, soloNow[cyclesemu::kTracks] = {};
-    int levelSent[cyclesemu::kTracks] = {-1, -1, -1, -1, -1, -1};
+    int levelSent[cyclesemu::kTracks] = {-1, -1, -1, -1, -1, -1, -1, -1};
     // the level as the firmware applies it: it eases each change, 3 % of
     // the way a block (measured, NOTES.md step 33), for the meters
     float levelEased[cyclesemu::kTracks] = {};

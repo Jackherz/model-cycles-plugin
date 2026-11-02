@@ -3,12 +3,12 @@
 //
 // MIDI, in one of two modes (parameter "MIDI Mode"):
 //  - Drum Map (default, for DAWs that send one channel): on any channel,
-//    C1-F1 (notes 36-41) trigger tracks 1-6 at their own pitch (note 60, C4,
+//    C1-G1 (notes 36-43) trigger tracks 1-8 at their own pitch (note 60, C4,
 //    is the programmed pitch), and notes from C3 (48) up play the "Keys
 //    Track" chromatically.
-//  - Ch 1-6 = Tracks: channels 1-6 play tracks 1-6 chromatically, as the
+//  - Ch 1-8 = Tracks: channels 1-8 play tracks 1-8 chromatically, as the
 //    hardware does.
-// CCs on channels 1-6 set that track (NOTES.md, CC table), clamped as the
+// CCs on channels 1-8 set that track (NOTES.md, CC table), clamped as the
 // firmware clamps them; FX CCs work on any of those channels.
 //
 // Tempo: the host's BPM when "Follow Host Tempo" is on and the host has
@@ -406,6 +406,16 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
 {
     int err = 0;
     engine = mc_engine_new(stateDir().getFullPathName().toRawUTF8(), &err);
+    // tracks 7-8: a second engine from the same state (not in CyclesFX)
+    if (engine != nullptr && !isFx())
+    {
+        engine2 = mc_engine_new(stateDir().getFullPathName().toRawUTF8(), &err);
+        if (engine2 == nullptr)
+        {
+            mc_engine_free(engine);
+            engine = nullptr;
+        }
+    }
     if (engine == nullptr)
         engineError = "Engine state not found or unreadable in " + stateDir().getFullPathName()
                       + " (error " + juce::String(err) + "). Run aot/dump_state.py and copy it there.";
@@ -420,9 +430,20 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     followHost = apvts.getRawParameterValue("followhost");
     if (engine != nullptr)
     {
-        mc_engine_set_tempo(engine, 120.0);   // internal clock; a saved state may wait for MIDI clock
-        mc_engine_set_smooth_filter(engine, 1);   // the track filter without zipper steps (engine.c)
+        for (auto* g : {engine, engine2})
+        {
+            mc_engine_set_tempo(g, 120.0);   // internal clock; a saved state may wait for MIDI clock
+            mc_engine_set_smooth_filter(g, 1);   // the track filter without zipper steps (engine.c)
+        }
         appliedBpm = 120.0;
+        // the second engine: only its tracks 0-1 play (7-8); its delay and
+        // reverb sends go to the first engine's effects, its own silent
+        for (int t = 2; engine2 != nullptr && t < kEngineTracks; ++t)
+        {
+            mc_engine_mute(engine2, t, 1);
+            mc_engine_level(engine2, t, 0);
+        }
+        mc_engine_share(engine2, engine);
         if (mc_engine_get_param(engine, 6, 0x16) > 126)   // reverb size 127 plays as 126 (step 10)
             mc_engine_param(engine, 6, 0x16, 126);
     }
@@ -458,17 +479,17 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     }
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the knobs the modulation adds to
         for (int k = 0; k < 33; ++k)
-            knobValue[t][k] = mc_engine_get_param(engine, t, 0x14 + 2 * k);
+            knobValue[t][k] = mc_engine_get_param(eng(t), loc(t), 0x14 + 2 * k);
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the pitch the glides add to
     {
-        glides[t].userPitch = mc_engine_get_param(engine, t, 0x28);
+        glides[t].userPitch = mc_engine_get_param(eng(t), loc(t), 0x28);
         glides[t].sentWord = glides[t].userPitch << 8;
     }
     for (int t = 0; engine != nullptr && t < kTracks; ++t)   // the mixer's starting point
     {
-        levelNow[t] = levelSent[t] = mc_engine_get_level(engine, t);
+        levelNow[t] = levelSent[t] = mc_engine_get_level(eng(t), loc(t));
         levelEased[t] = (float)levelSent[t] / 127.0f;
-        mutedNow[t] = mc_engine_get_mute(engine, t) != 0;
+        mutedNow[t] = mc_engine_get_mute(eng(t), loc(t)) != 0;
     }
     if (engine != nullptr)
         applyMix();
@@ -479,6 +500,7 @@ CyclesEmuProcessor::CyclesEmuProcessor(Product p)
     {
         if (twin->loadFolder(juce::File(settings().getValue("twinFolder")), twinPick()) > 0)
             twin->install(engine);
+            twin->install(engine2);
     }
     if (engine != nullptr && isVoice())   // and one sound on every voice from the start
         for (auto& s : slots)
@@ -578,6 +600,7 @@ int CyclesEmuProcessor::loadTwinFolder(const juce::File& folder)
     if (!isPrepared)
     {
         next->install(engine);
+        next->install(engine2);
         twin = std::move(next);
         return n;
     }
@@ -692,6 +715,7 @@ CyclesEmuProcessor::~CyclesEmuProcessor()
 {
     cancelPendingUpdate();
     mc_engine_free(engine);
+    mc_engine_free(engine2);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayout()
@@ -727,8 +751,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout CyclesEmuProcessor::makeLayo
     {
         layout.add(std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"midimode", 1}, "MIDI Mode",
-            juce::StringArray{"Drum Map C1-F1", "Ch 1-6 = Tracks"}, 0));
-        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, 6, 1));
+            juce::StringArray{"Drum Map C1-G1", "Ch 1-8 = Tracks"}, 0));
+        layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"keystrack", 1}, "Keys Track", 1, kTracks, 1));
     }
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"followhost", 1}, "Follow Host Tempo", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -755,28 +779,29 @@ int CyclesEmuProcessor::currentEngineValue(const Slot& s) const
 {
     switch (s.def->kind)
     {
-        case Kind::Level: return mc_engine_get_level(engine, s.track);
-        case Kind::Mute: return mc_engine_get_mute(engine, s.track);
+        case Kind::Level: return mc_engine_get_level(eng(s.track), loc(s.track));
+        case Kind::Mute: return mc_engine_get_mute(eng(s.track), loc(s.track));
         case Kind::Solo: return 0;
         case Kind::Glide: return glideDefault(s.def->id);
         case Kind::Filter: return 0;   // the Cycles' filter, as the firmware has it
         case Kind::FxEngine: return std::strcmp(s.def->id, "delayx") && std::strcmp(s.def->id, "reverbx") ? 0 : 64;
+        case Kind::Fx: return juce::jlimit(s.def->lo, s.def->hi, mc_engine_get_param(engine, 6, s.def->offset));   // its FX slot
         case Kind::KitWord: return kitWordDefault(s.def->id);   // the kit has none: the Syntakt's defaults
         case Kind::Mod: return modDefault(s.def->id);
         case Kind::ExtraLfo: return extraLfoDefault(s.def->id);
         case Kind::Amp:   // the kit has none: the Syntakt's defaults for the machine
-            return ampDefault(s.def->id, juce::jlimit(0, 11, mc_engine_get_param(engine, s.track, 0x26)));
-        case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(engine, s.track, 0x18)) % 12;
-        case Kind::LfoSync: return mc_engine_get_param(engine, s.track, 0x18) >= 12 ? 1 : 0;
+            return ampDefault(s.def->id, juce::jlimit(0, 11, mc_engine_get_param(eng(s.track), loc(s.track), 0x26)));
+        case Kind::LfoMult: return juce::jlimit(0, 23, mc_engine_get_param(eng(s.track), loc(s.track), 0x18)) % 12;
+        case Kind::LfoSync: return mc_engine_get_param(eng(s.track), loc(s.track), 0x18) >= 12 ? 1 : 0;
         case Kind::LfoDest:
         {
-            int v = mc_engine_get_param(engine, s.track, 0x1c);
+            int v = mc_engine_get_param(eng(s.track), loc(s.track), 0x1c);
             for (int i = 0; i < kNumLfoDests; ++i)
                 if (kLfoDestValues[i] == v)
                     return i;
             return 0;
         }
-        default: return juce::jlimit(s.def->lo, s.def->hi, mc_engine_get_param(engine, s.track, s.def->offset));
+        default: return juce::jlimit(s.def->lo, s.def->hi, mc_engine_get_param(eng(s.track), loc(s.track), s.def->offset));
     }
 }
 
@@ -800,7 +825,7 @@ void CyclesEmuProcessor::applyMix()
         const int want = mutedNow[t] || (anySolo && !soloNow[t]) ? 0 : levelNow[t];
         if (want != levelSent[t])
         {
-            mc_engine_level(engine, t, want);
+            mc_engine_level(eng(t), loc(t), want);
             levelSent[t] = want;
         }
     }
@@ -832,8 +857,8 @@ void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
         for (int t = 0; t < kTracks; ++t)
             if (voices[t].on && voices[t].note == note)
             {
-                mc_engine_note(engine, t, note, 0, 0, 0x0681);
-                mc_engine_amp_event(engine, t, 0, 1, 0);
+                mc_engine_note(eng(t), loc(t), note, 0, 0, 0x0681);
+                mc_engine_amp_event(eng(t), loc(t), 0, 1, 0);
                 voices[t].on = false;
                 voices[t].age = ++voiceClock;
                 glides[t].frozen = gs.gating;
@@ -850,7 +875,7 @@ void CyclesEmuProcessor::voiceNote(int note, int velocity, bool on)
             if ((pass == 1 || !voices[t].on) && (pick < 0 || voices[t].age < voices[pick].age))
                 pick = t;
     if (voices[pick].on)
-        mc_engine_note(engine, pick, voices[pick].note, 0, 0, 0x0681);
+        mc_engine_note(eng(pick), loc(pick), voices[pick].note, 0, 0, 0x0681);
     voices[pick] = {note, true, ++voiceClock};
     // portamento: from the pitch the last note played had reached, on whichever voice
     const bool glide = gs.port && lastVoice >= 0 && (!gs.legatoOnly || anyOn);
@@ -892,10 +917,10 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
     // first: the note starts where the glide does, without the firmware's
     // smoothing sliding there from the last note's pitch
     writePitch(track);
-    mc_engine_snap_param(engine, track, 0x28);
+    mc_engine_snap_param(eng(track), loc(track), 0x28);
     applyNoteMods(track, note, velocity);
-    mc_engine_note(engine, track, note, velocityToVol(isVoice() ? 0 : track, velocity), 1, 0x0681);
-    mc_engine_amp_event(engine, track, 1, 0, 0);   // the amp envelope's trig, in the same block
+    mc_engine_note(eng(track), loc(track), note, velocityToVol(isVoice() ? 0 : track, velocity), 1, 0x0681);
+    mc_engine_amp_event(eng(track), loc(track), 1, 0, 0);   // the amp envelope's trig, in the same block
     extraLfoNote(track);
 }
 
@@ -904,7 +929,7 @@ void CyclesEmuProcessor::startNote(int track, int note, int velocity, bool glide
 void CyclesEmuProcessor::pushAmp(int track)
 {
     const int* a = ampValue[track];
-    mc_engine_set_amp(engine, track, a[0], a[2], a[3], a[4], a[5], a[6], a[1], a[7]);
+    mc_engine_set_amp(eng(track), loc(track), a[0], a[2], a[3], a[4], a[5], a[6], a[1], a[7]);
 }
 
 // Legato: to another key without a new trigger, the pitch word carrying the
@@ -922,7 +947,7 @@ void CyclesEmuProcessor::legatoTo(int track, int note, const GlideSettings& s)
         g.cur = note, g.step = 0;
     writePitch(track);
     if (!s.port)   // a legato step without portamento: at once, as on the hardware
-        mc_engine_snap_param(engine, track, 0x28);
+        mc_engine_snap_param(eng(track), loc(track), 0x28);
     applyNoteMods(track, note, g.velocity);   // key tracking follows the key
 }
 
@@ -956,10 +981,10 @@ void CyclesEmuProcessor::applyNoteMods(int track, int note, int velocity)
             if (lfoOffset[track][k] != 0.0)
                 writeWord(track, k);
             else
-                mc_engine_param(engine, track, offset, juce::jlimit(0, 127, knobValue[track][k] + off[k]));
-            mc_engine_snap_param(engine, track, offset);
+                mc_engine_param(eng(track), loc(track), offset, juce::jlimit(0, 127, knobValue[track][k] + off[k]));
+            mc_engine_snap_param(eng(track), loc(track), offset);
         }
-    mc_engine_set_filter_key(engine, track, (note - 60) * raw(17) / 127.0);
+    mc_engine_set_filter_key(eng(track), loc(track), (note - 60) * raw(17) / 127.0);
 }
 
 // Velocity To Vol: the engine scales the volume by velocity (about
@@ -1019,9 +1044,9 @@ void CyclesEmuProcessor::trackNote(int track, int note, int velocity, bool on)
     }
     if (s.legato && !anyHeld)
         return;   // not a key it knew of
-    mc_engine_note(engine, track, s.legato ? g.trig : note, 0, 0, 0x0681);
+    mc_engine_note(eng(track), loc(track), s.legato ? g.trig : note, 0, 0, 0x0681);
     if (s.legato || note == g.trig)   // the amp envelope: only the note it plays releases it
-        mc_engine_amp_event(engine, track, 0, 1, 0);
+        mc_engine_amp_event(eng(track), loc(track), 0, 1, 0);
     if (s.gating && (s.legato || note == g.trig))   // Gating: the glide stops with the key
         g.frozen = true;
 }
@@ -1037,9 +1062,9 @@ void CyclesEmuProcessor::writePitch(int track, bool force)
     const int word = juce::jlimit(40 << 8, 88 << 8, (g.userPitch << 8) + offset + lfo);
     if (word != g.sentWord || force)
     {
-        mc_engine_param_word(engine, track, 0x28, word);
+        mc_engine_param_word(eng(track), loc(track), 0x28, word);
         if (lfo != 0)   // LFO 2 on Pitch: block by block, as LFO 1 (writeWord)
-            mc_engine_snap_param(engine, track, 0x28);
+            mc_engine_snap_param(eng(track), loc(track), 0x28);
         g.sentWord = word;
     }
 }
@@ -1153,9 +1178,9 @@ void CyclesEmuProcessor::writeWord(int track, int k)
 {
     const double v = knobValue[track][k] + modOffset[track][k] + lfoOffset[track][k];
     const int offset = 0x14 + 2 * k;
-    mc_engine_param_word(engine, track, offset, juce::jlimit(0, 127 << 8, juce::roundToInt(v * 256.0)));
+    mc_engine_param_word(eng(track), loc(track), offset, juce::jlimit(0, 127 << 8, juce::roundToInt(v * 256.0)));
     if (lfoOffset[track][k] != 0.0)
-        mc_engine_snap_param(engine, track, offset);
+        mc_engine_snap_param(eng(track), loc(track), offset);
 }
 
 void CyclesEmuProcessor::applyLfoMult(int track)
@@ -1163,7 +1188,7 @@ void CyclesEmuProcessor::applyLfoMult(int track)
     const int pt = isVoice() ? 0 : track;   // CyclesVoice: the one sound's settings
     int mult = juce::jlimit(0, 11, paramValue(pt, "lfomult"));
     int freeRunning = paramValue(pt, "lfosync") != 0;
-    mc_engine_param(engine, track, 0x18, mult + 12 * freeRunning);
+    mc_engine_param(eng(track), loc(track), 0x18, mult + 12 * freeRunning);
 }
 
 void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
@@ -1185,8 +1210,8 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             else if (d.offset == 0x26)   // machine: at once, not slid through the others by the smoother
             {
                 knobValue[track][(0x26 - 0x14) / 2] = v;
-                mc_engine_param(engine, track, 0x26, v);
-                mc_engine_snap_param(engine, track, 0x26);
+                mc_engine_param(eng(track), loc(track), 0x26, v);
+                mc_engine_snap_param(eng(track), loc(track), 0x26);
             }
             else if (d.offset >= 0x14)   // with the last note's velocity / key offset
             {
@@ -1195,20 +1220,20 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
                 if (lfoOffset[track][k] != 0.0)   // with LFO 2 on it: the sum, as every block
                     writeWord(track, k);
                 else
-                    mc_engine_param(engine, track, d.offset, juce::jlimit(d.lo, d.hi, v + modOffset[track][k]));
+                    mc_engine_param(eng(track), loc(track), d.offset, juce::jlimit(d.lo, d.hi, v + modOffset[track][k]));
             }
             else
-                mc_engine_param(engine, track, d.offset, v);
+                mc_engine_param(eng(track), loc(track), d.offset, v);
             break;
         case Kind::Glide:
         case Kind::Mod: break;   // read at each note
         case Kind::Filter:
             (std::strcmp(d.id, "ftype") ? filterExtra : filterType)[track] = v;
-            mc_engine_set_filter(engine, track, filterEngineType(filterType[track]), filterExtra[track]);
+            mc_engine_set_filter(eng(track), loc(track), filterEngineType(filterType[track]), filterExtra[track]);
             break;
         case Kind::Fx: mc_engine_param(engine, 6, d.offset, v); break;
         case Kind::FxEngine: updateFxEngines(); break;
-        case Kind::KitWord: mc_engine_twin_param(engine, track, 0, v); break;   // Sample 2
+        case Kind::KitWord: mc_engine_twin_param(eng(track), loc(track), 0, v); break;   // Sample 2
         case Kind::ExtraLfo: break;   // read at every block (updateExtraLfos)
         case Kind::Amp:
             for (int i = 0; i < 8; ++i)
@@ -1222,7 +1247,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             break;
         case Kind::Mute:
             mutedNow[track] = v != 0;
-            mc_engine_mute(engine, track, v != 0);
+            mc_engine_mute(eng(track), loc(track), v != 0);
             applyMix();
             break;
         case Kind::Solo:
@@ -1231,7 +1256,7 @@ void CyclesEmuProcessor::applyToEngine(const ParamDef& d, int track, int v)
             break;
         case Kind::LfoMult:
         case Kind::LfoSync: applyLfoMult(track); break;
-        case Kind::LfoDest: mc_engine_param(engine, track, 0x1c, kLfoDestValues[v]); break;
+        case Kind::LfoDest: mc_engine_param(eng(track), loc(track), 0x1c, kLfoDestValues[v]); break;
     }
 }
 
@@ -1267,7 +1292,7 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
         int track = ch, note = m.getNoteNumber();
         if (midiMode->load() < 0.5f)              // Drum Map
         {
-            if (note >= 36 && note <= 41)
+            if (note >= 36 && note < 36 + kTracks)   // C1-G1: tracks 1-8
             {
                 track = note - 36;
                 note = 60;                        // the track's programmed pitch
@@ -1289,14 +1314,14 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
     if (cc == 103)                                // multiplier: the firmware's 0-23 directly
     {
         for (int t = first; t <= last; ++t)
-            mc_engine_param(engine, t, 0x18, juce::jlimit(0, 23, v));
+            mc_engine_param(eng(t), loc(t), 0x18, juce::jlimit(0, 23, v));
         return;
     }
     if (cc == 105)                                // destination: the firmware takes 0, 10-22 and 28-31
     {
         if (v == 0 || (v >= 10 && v <= 22) || (v >= 28 && v <= 31))
             for (int t = first; t <= last; ++t)
-                mc_engine_param(engine, t, 0x1c, v);
+                mc_engine_param(eng(t), loc(t), 0x1c, v);
         return;
     }
     for (int i = 0; i < kNumTrackParams; ++i)
@@ -1312,7 +1337,7 @@ void CyclesEmuProcessor::handleMidi(const juce::MidiMessage& m)
     for (int i = 0; i < kNumFxParams; ++i)
         if (kFxParams[i].cc == cc)
         {
-            applyToEngine(kFxParams[i], 6, v);
+            applyToEngine(kFxParams[i], kTracks, v);   // (FX: the first engine's, whatever the track)
             return;
         }
 }
@@ -1461,6 +1486,7 @@ void CyclesEmuProcessor::renderEngineBlock()
     if (twinPending.load(std::memory_order_acquire))   // a new sample bank: in between blocks
     {
         twinNext->install(engine);
+        twinNext->install(engine2);
         std::swap(twin, twinNext);
         twinPending.store(false, std::memory_order_release);
     }
@@ -1471,15 +1497,27 @@ void CyclesEmuProcessor::renderEngineBlock()
     if (std::abs(targetBpm - appliedBpm) > 1e-4)
     {
         mc_engine_set_tempo(engine, targetBpm);
+        mc_engine_set_tempo(engine2, targetBpm);
         appliedBpm = targetBpm;
     }
-    const int renderStatus = mc_engine_render(engine, blockL, blockR);
+    // tracks 7-8 first: their sends must be in before the first engine's
+    // delay and reverb run (mc_engine_share); then the sum
+    float l2[kBlock] = {}, r2[kBlock] = {};
+    const int status2 = engine2 != nullptr ? mc_engine_render(engine2, l2, r2) : 0;
+    int renderStatus = mc_engine_render(engine, blockL, blockR);
+    if (engine2 != nullptr)
+    {
+        for (int i = 0; i < kBlock; ++i)
+            blockL[i] += l2[i], blockR[i] += r2[i];
+        renderStatus |= status2;
+    }
     // the mixer's meters: each track's peak in the render's own track
     // buffers (SRAM 0x80001858 + 128 t: 32 big-endian Q31 samples, after
     // Vol+Dist, before level and pan), times its level's gain
     {
-        uint8_t raw[kTracks * 128];
-        mc_engine_read(engine, 0x80001858u, raw, sizeof raw);
+        uint8_t raw[kTracks * 128] = {};
+        mc_engine_read(engine, 0x80001858u, raw, kEngineTracks * 128);
+        mc_engine_read(engine2, 0x80001858u, raw + kEngineTracks * 128, (kTracks - kEngineTracks) * 128);
         for (int t = 0; t < kTracks; ++t)
         {
             int32_t peak = 0;

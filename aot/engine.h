@@ -86,6 +86,14 @@ void mc_engine_set_amp(mc_engine *g, int track, int on, int atk, int hold, int d
  * kill (cut, e.g. a stolen voice) */
 void mc_engine_amp_event(mc_engine *g, int track, int trig, int release, int kill);
 
+/* One delay and one reverb for two engines (NOTES.md step 46): the donor's
+ * delay and reverb sends are added into the receiver's send buses before
+ * its effects run, and the donor's own effects are silenced (its output is
+ * its dry tracks). Render the donor first, then the receiver, each block,
+ * and sum their outputs. Needs the effect hooks (4005698c, 40056a1c,
+ * 400569a2, 40056a32). */
+void mc_engine_share(mc_engine *donor, mc_engine *receiver);
+
 #ifdef __cplusplus
 }
 #endif

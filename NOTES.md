@@ -1935,6 +1935,67 @@ designed so that 2-3 more need no rewrite.
   help, and a page (the header button would cycle LFO 1 / 2 / 3). The
   modulation pipeline already sums any number.
 
+## Step 46: eight tracks, eight voices, one delay and reverb (2026-10-31)
+
+Jack: eight tracks in CyclesEmu, eight-note polyphony in CyclesVoice, one
+shared delay and reverb if possible.
+- **Two engines** (the plan from step 44's spike): the firmware has six
+  tracks, so tracks 1-6 are the first engine's, and 7-8 a second engine's
+  tracks 0-1 (`CyclesEmuProcessor::eng` and `loc`; nothing passes 6 or 7 to
+  the six-track API).
+  - The second engine starts from the same state: its 0-1 are the kit's
+    track 1-2 sounds; its 2-5 are muted at level 0.
+  - CyclesFX makes no second engine. The engine's public calls do nothing
+    without an engine (22 guarded).
+  - `kTracks` = 8 (logical tracks), `kEngineTracks` = 6. The FX parameter
+    ids stay `fx_` (they use `kTracks`, never a literal).
+- **Shared effects** (`mc_engine_share(donor, receiver)`):
+  - At the donor's pre-effect hooks its send buses are captured, and its
+    bus is zeroed (its own delay line stays empty). At its post-effect
+    hooks its outputs are zeroed.
+  - The receiver adds the captured buses into its own at its pre-effect
+    hooks, after which the host input and the plugin-side effects follow as
+    before.
+  - Each block: render the donor (tracks 7-8), then the receiver, and sum.
+  - **Measured: track 7 against track 1** (the same sound; only the engine
+    differs; sends 60, delay feedback 70): **-133 dB**, dry, delay and
+    reverb.
+  - Dry is bit-identical. With the delay alone the first echo is within
+    -135 dB.
+  - **The one exception:** a send hot enough to saturate the firmware
+    delay's feedback loop (100 at full level, feedback 70) turns the shared
+    path's 1-bit difference into another, equally valid echo tail (-25 dB
+    apart after the second echo). Feedback 0 and 40, sends 40 and 60, even
+    feedback 100 at send 40 all stay within -128 dB.
+  - Within one engine a copy of track 1 on track 2 is bit-identical even
+    then, so the 1-bit difference is the sharing path's (perhaps the
+    accumulator precision the firmware's own mixer hands its delay; not
+    proven). This is also step 44's spike burst, which used feedback 90.
+- **Plugin:**
+  - Meters read both engines' track buffers.
+  - Tempo, the smooth filter and Twinshot's samples go to both engines; the
+    amp envelope and LFO 2 work per logical track.
+  - Drum Map: C1-G1 (36-43) play tracks 1-8; Ch mode channels 1-8; Keys
+    Track 1-8; CyclesVoice Voices 1-8 (default 8).
+  - Kits save 8 tracks; a 6-track kit leaves tracks 7-8 as they were.
+  - Editor: tabs "Trk 1".."Trk 8", Mix and FX; an 8-strip mixer.
+  - Two more track colours: orange and teal. The Mix/FX grey is
+    `kAccentFx`, so `kAccents[7]` is no longer read past the end.
+- **Tests** (EditorShot "eight tracks", 33 PASS):
+  - Track 7 against track 1: -133 dB.
+  - The drum map and channels 7-8; mute, solo and level on 7-8.
+  - CyclesVoice: 8 notes, 8 voices heard.
+  - Kits: 8 tracks saved; a 6-track kit loaded.
+  - The amp envelope on track 8; Twinshot on track 7.
+  - HostTest (44.1 kHz resampling, CyclesFX) 8 PASS.
+- **Caught by LoadTest:** CyclesFX (no second engine) crashed in
+  `mc_engine_read`, a one-line function the null guards had missed (also
+  `mc_engine_kit`, `mc_engine_amp_available`). All are guarded now;
+  LoadTest 11, auval x3.
+- **Cost** (M1 Pro, 128-sample callbacks, no PGO): 6 tracks playing 264 us
+  (9.9 %; 185 us with one engine before), 8 playing 304 us (11.4 %). The
+  second engine always runs, to stay in step.
+
 ## Next steps
 
 Owner's notes for a later build (2026-10-31, after step 44):
@@ -1948,6 +2009,16 @@ Owner's notes for a later build (2026-10-31, after step 45):
   the hardware (both LFOs).
 - An LFO start delay, as the Syntakt has.
 - LFOs able to target the amp envelope's settings.
+
+Owner's notes for a later build (2026-11-02, after step 46):
+- Closing and reopening the plugin window should come back to the page it
+  was on.
+- Velocity Mod and Key Tracking should be able to target every LFO 1 and
+  LFO 2 control, and the amp envelope's.
+- When the filter type changes, the LFO and Velocity/Key destination lists
+  should show that type's controls by their names (Freq, Fdbk, LPF on the
+  combs, and so on), not the Cycles filter's.
+- A SOLO button next to MUTE on each track's own page.
 
 
 

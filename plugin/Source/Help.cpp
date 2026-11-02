@@ -280,9 +280,9 @@ const std::map<juce::String, HelpText> kHelp = {
     {"reverbtone", {"Reverb Tone", "The reverb's colour, from dark to bright."}},
     {"midimode",
      {"MIDI Mode",
-      "Drum Map: on any channel, C1 to F1 play tracks 1 to 6, and notes from C2 up play the Key Trk track "
+      "Drum Map: on any channel, C1 to G1 play tracks 1 to 8, and notes from C2 up play the Key Trk track "
       "(note names as Live shows them: middle C, note 60, is C3). "
-      "Ch 1-6: MIDI channels 1 to 6 play tracks 1 to 6, as on the hardware."}},
+      "Ch 1-8: MIDI channels 1 to 8 play tracks 1 to 8, as the hardware does for its six."}},
     {"fxdelay", {"Delay Send", "How much of the input goes into the delay. Its return also feeds the reverb."}},
     {"fxreverb", {"Reverb Send", "How much of the input goes into the reverb."}},
     {"fxmix",
@@ -291,10 +291,11 @@ const std::map<juce::String, HelpText> kHelp = {
       "channel; lower it to use CyclesFX as an insert."}},
     {"voices",
      {"Voices",
-      "CyclesVoice plays one sound on the six engine tracks as six voices. This sets how many it uses: 1 is "
-      "mono (each note cuts the last), 6 lets chords and tails overlap. The oldest voice is reused first."}},
+      "CyclesVoice plays one sound on up to eight voices (two engines of six tracks, its own effects shared). "
+      "This sets how many it uses: 1 is mono (each note cuts the last), 8 lets chords and tails overlap. The "
+      "oldest voice is reused first."}},
     {"keystrack",
-     {"Key Trk", "In Drum Map mode, the track that notes from C2 up play, chromatically (C1 to F1 play the six "
+     {"Key Trk", "In Drum Map mode, the track that notes from C2 up play, chromatically (C1 to G1 play the eight "
                  "tracks)."}},
     {"followhost",
      {"Host Tempo",

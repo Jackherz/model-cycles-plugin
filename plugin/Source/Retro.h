@@ -14,10 +14,12 @@ inline juce::Colour kFace(0xffc0c0c0), kLight(0xffffffff), kShadow(0xff808080), 
     kHilite(0xffdfdfdf), kNavy(0xff000080), kTitleEnd(0xff1084d0), kDesktop(0xff008080),
     kField(0xffffffff), kText(0xff000000), kDimText(0xff505050),
     kTitleText(0xffffffff), kSelect(0xff000080);   // text on the title bar / a selection
-// The N64 logo's four colours and two more: the tracks' own, in every scheme.
+// The N64 logo's four colours and four more: the tracks' own, in every
+// scheme (tracks 1-8); and the Mix and FX pages' grey.
 const juce::Colour kAccents[] = {juce::Colour(0xffe2231a), juce::Colour(0xfff6b800), juce::Colour(0xff009e49),
                                  juce::Colour(0xff0057b7), juce::Colour(0xff7a3fbf), juce::Colour(0xffe2231a),
-                                 juce::Colour(0xff4a4a4a)};   // tracks 1-6, FX
+                                 juce::Colour(0xfff57c00), juce::Colour(0xff00a0a0)};
+const juce::Colour kAccentFx(0xff4a4a4a);
 
 // Metal Gear Solid's Codec: phosphor green on near-black, in a gunmetal
 // bevel, with grey label plates.

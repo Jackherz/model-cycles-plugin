@@ -17,8 +17,8 @@ int main(int argc, char** argv)
     CyclesEmuProcessor proc;
     std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
     auto* e = dynamic_cast<CyclesEmuEditor*>(ed.get());
-    const char* names[] = {"track1", "track2", "track3", "track4", "track5", "track6", "mix", "fx"};
-    for (int i = 0; i < 8; ++i)
+    const char* names[] = {"track1", "track2", "track3", "track4", "track5", "track6", "track7", "track8", "mix", "fx"};
+    for (int i = 0; i < cyclesemu::kTracks + 2; ++i)
     {
         e->showPage(i);
         auto img = e->createComponentSnapshot(e->getLocalBounds(), true, 1.0f);
@@ -1115,6 +1115,114 @@ int main(int argc, char** argv)
                     full > none * 4 ? "PASS" : "FAIL");
     }
 
+    // eight tracks (NOTES.md step 46): tracks 7-8 on a second engine,
+    // sharing the first's delay and reverb
+    {
+        struct Ev { int block, channel, note, vel; };
+        auto render = [](Product product, std::initializer_list<std::pair<const char*, float>> settings, std::vector<Ev> events,
+                         int blocks, int mode = 1) {
+            auto f = std::make_unique<CyclesEmuProcessor>(product);
+            cyclesemu::setPlain(f->state(), "midimode", (float)mode);
+            for (auto [id, v] : settings)
+                cyclesemu::setPlain(f->state(), id, v);
+            f->prepareToPlay(48000, 32);
+            juce::AudioBuffer<float> buf(2, 32);
+            std::vector<float> out;
+            std::vector<float> peaks(cyclesemu::kTracks, 0.0f);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                for (auto& e : events)
+                    if (e.block == b)
+                        midi.addEvent(e.vel ? juce::MidiMessage::noteOn(e.channel, e.note, (juce::uint8)e.vel)
+                                            : juce::MidiMessage::noteOff(e.channel, e.note), 0);
+                buf.clear();
+                f->processBlock(buf, midi);
+                for (int i = 0; i < 32; ++i)
+                    out.push_back(buf.getSample(0, i)), out.push_back(buf.getSample(1, i));
+                for (int t = 0; t < cyclesemu::kTracks; ++t)
+                    peaks[(size_t)t] = std::max(peaks[(size_t)t], f->takeTrackPeak(t));
+            }
+            return std::pair{out, peaks};
+        };
+        auto rms = [](const std::vector<float>& x, size_t from, size_t to) {
+            double e = 0;
+            for (size_t i = from; i < to; ++i)
+                e += x[i] * x[i];
+            return std::sqrt(e / (double)(to - from));
+        };
+        // track 1 against track 7, the same sound (the same kit track), both sends up: dry, delay and
+        // reverb through the shared effects. (A send hot enough to saturate the firmware delay's
+        // feedback loop, 100 at full level with feedback 70, amplifies the shared path's 1-bit
+        // difference into another, equally valid echo tail: reported, not tested; step 46.)
+        const int w0 = 400;   // the sends ramp to their settings first
+        auto pair17 = [&](float send, float fb) {
+            std::initializer_list<std::pair<const char*, float>> same{
+                {"t1_machine", 4}, {"t1_decay", 90}, {"t1_delaysend", send}, {"t1_reverbsend", send}, {"t1_pan", 64},
+                {"t7_machine", 4}, {"t7_decay", 90}, {"t7_delaysend", send}, {"t7_reverbsend", send}, {"t7_pan", 64},
+                {"t7_level", 100}, {"t1_level", 100}, {"fx_delayfeedback", fb}};
+            auto on1 = render(Product::Full, same, {{w0, 1, 60, 110}}, w0 + 3000).first;
+            auto on7 = render(Product::Full, same, {{w0, 7, 60, 110}}, w0 + 3000).first;
+            double sum2 = 0, ref2 = 0;
+            for (size_t i = (size_t)w0 * 64; i < on1.size(); ++i)
+                sum2 += (on7[i] - on1[i]) * (on7[i] - on1[i]), ref2 += (double)on1[i] * on1[i];
+            return 10 * std::log10(sum2 / ref2 + 1e-30);
+        };
+        const double diffDb = pair17(60, 70), hotDb = pair17(100, 70);
+        // the drum map: F#1 and G1 play tracks 7 and 8; channels 7 and 8 in Ch mode
+        auto [dm, pdm] = render(Product::Full, {}, {{100, 1, 42, 110}, {100, 1, 43, 110}}, 400, 0);
+        auto [chm, pch] = render(Product::Full, {}, {{100, 7, 60, 110}, {100, 8, 60, 110}}, 400, 1);
+        // mute 7, solo 8, level 8 at 0
+        auto [mu, pmu] = render(Product::Full, {{"t7_mute", 1}}, {{100, 7, 60, 110}}, 400);
+        auto [so, pso] = render(Product::Full, {{"t8_solo", 1}}, {{100, 1, 60, 110}, {100, 8, 60, 110}}, 400);
+        auto [lv, plv] = render(Product::Full, {{"t8_level", 0}}, {{100, 8, 60, 110}}, 400);
+        const double one8 = rms(chm, 100 * 64, chm.size());
+        // CyclesVoice: 8 notes, 8 voices, each heard
+        std::vector<Ev> chord;
+        for (int k = 0; k < 8; ++k)
+            chord.push_back({100, 1, 48 + 3 * k, 110});
+        auto [v8, pv8] = render(Product::Voice, {{"voices", 8}}, chord, 400);
+        int voicesHeard = 0;
+        for (float pk : pv8)
+            voicesHeard += pk > 0.001f;
+        // a kit saves 8 tracks; a 6-track kit loads, tracks 7-8 as they were
+        bool kitOk = false;
+        {
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "t8_decay", 33);
+            auto kit = cyclesemu::kitToTree(f.state());
+            int tracks = 0;
+            for (auto tr : kit)
+                tracks += tr.hasType("Track");
+            for (int i = kit.getNumChildren() - 1; i >= 0; --i)   // the kit as six tracks had it
+                if (kit.getChild(i).hasType("Track") && (int)kit.getChild(i).getProperty("index") >= 6)
+                    kit.removeChild(i, nullptr);
+            cyclesemu::setPlain(f.state(), "t8_decay", 99);
+            cyclesemu::treeToKit(f.state(), kit);
+            kitOk = tracks == 8 && juce::roundToInt(f.state().getRawParameterValue("t8_decay")->load()) == 99;
+        }
+        // the amp envelope and LFO 2 on track 8
+        auto [env8, pe8] = render(Product::Full, {{"t8_machine", 4}, {"t8_decay", 127}, {"t8_amp", 1}, {"t8_amode", 0}, {"t8_ahold", 0},
+                                                  {"t8_adec", 8}, {"t8_delaysend", 0}, {"t8_reverbsend", 0}}, {{400, 8, 60, 110}}, 1200);
+        auto [ref8, pr8] = render(Product::Full, {{"t8_machine", 4}, {"t8_decay", 127}, {"t8_delaysend", 0}, {"t8_reverbsend", 0}},
+                                  {{400, 8, 60, 110}}, 1200);
+        const double envRatio = rms(env8, 900 * 64, 1200 * 64) / (rms(ref8, 900 * 64, 1200 * 64) + 1e-12);
+        // SP Twinshot on track 7: the samples are in the second engine too
+        auto [tw7, ptw7] = render(Product::Full, {{"t7_machine", 11}, {"t7_decay", 127}}, {{400, 7, 60, 110}}, 900);
+        const bool twinLoaded = CyclesEmuProcessor(Product::Full).twinSamples().count() > 0;
+        const double twin7 = rms(tw7, 400 * 64, 900 * 64);
+        const bool ok = diffDb < -100 && pdm[6] > 0.001f && pdm[7] > 0.001f
+                        && pch[6] > 0.001f && pch[7] > 0.001f && pmu[6] < 0.001f && pso[0] < 0.001f && pso[7] > 0.001f
+                        && plv[7] < 0.001f && one8 > 0.0 && voicesHeard == 8 && kitOk && envRatio < 0.01
+                        && (!twinLoaded || twin7 > 0.001);
+        std::printf("eight tracks: track 7 against track 1, the same sound, delay and reverb sends 60: difference %.1f dB "
+                    "(sends 100 at feedback 70, the delay saturating: %.1f dB); drum map F#1 G1 -> tracks 7 8 (%.3f %.3f); Ch 7 8 (%.3f %.3f); mute 7 %.3f; "
+                    "solo 8: track 1 %.3f, 8 %.3f; level 8 at 0 %.3f; CyclesVoice 8 notes: %d voices heard; kits: 8 tracks, a "
+                    "6-track kit leaves 7-8 %d; amp envelope on track 8 %.4f; SP Twinshot on track 7 %.4f (samples %d) -> %s\n",
+                    diffDb, hotDb, pdm[6], pdm[7], pch[6], pch[7], pmu[6], pso[0], pso[7], plv[7], voicesHeard,
+                    kitOk, envRatio, twin7, twinLoaded, ok ? "PASS" : "FAIL");
+    }
+
     // LFO 2 (NOTES.md step 45): off is the old sound; at LFO 1's settings
     // it moves a word as LFO 1 does (the smoothed words the voices read)
     {
@@ -1257,6 +1365,31 @@ int main(int argc, char** argv)
             return best * 1e6;
         };
         const double usOff = timed(false), usOn = timed(true);
+        {   // eight tracks playing: the cost of tracks 7-8 (the second engine) on top
+            CyclesEmuProcessor f(Product::Full);
+            cyclesemu::setPlain(f.state(), "midimode", 1);
+            for (int t = 1; t <= cyclesemu::kTracks; ++t)
+                cyclesemu::setPlain(f.state(), ("t" + juce::String(t) + "_decay").toRawUTF8(), 127);
+            f.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> buf(2, 128);
+            double best = 1e9;
+            for (int rep = 0; rep < 3; ++rep)
+            {
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                for (int b = 0; b < 1500; ++b)
+                {
+                    juce::MidiBuffer midi;
+                    if (b % 375 == 0)
+                        for (int ch = 1; ch <= cyclesemu::kTracks; ++ch)
+                            midi.addEvent(juce::MidiMessage::noteOn(ch, 60, (juce::uint8)110), 0);
+                    buf.clear();
+                    f.processBlock(buf, midi);
+                }
+                best = std::min(best, juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - t0) / 1500);
+            }
+            std::printf("eight tracks cost: 128-sample callback, 8 tracks playing %.1f us (%.1f%% of real time); 6 playing %.1f us\n",
+                        best * 1e6, best * 1e6 / (128.0 / 48000.0 * 1e6) * 100, usOff);
+        }
         std::printf("lfo 2 cost: 128-sample callback, 6 tracks playing: off %.1f us, LFO 2 on all 6 %.1f us (%+.1f us, %.2f%% of "
                     "real time)\n", usOff, usOn, usOn - usOff, (usOn - usOff) / (128.0 / 48000.0 * 1e6) * 100);
         // a track preset saved before LFO 2 loads with it off
@@ -1689,7 +1822,7 @@ int main(int argc, char** argv)
 
     // the help mode, as if hovering over a few controls
     const char* help[][3] = {{"0", "t1_color", "help-color"}, {"0", "t1_lforeset", "help-trigmode"}, {"1", "t2_color", "help-sybits-color"},
-                             {"7", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
+                             {"9", "fx_reverbsize", "help-reverbsize"}, {"0", "midimode", "help-midimode"}};
     for (auto& h : help)
     {
         e->showPage(juce::String(h[0]).getIntValue());
